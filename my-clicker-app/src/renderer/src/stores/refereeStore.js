@@ -1,19 +1,26 @@
-// src/renderer/src/stores/refereeStore.js
-import {defineStore} from 'pinia'
+import { defineStore } from 'pinia'
 import axios from 'axios'
 
 const API_BASE = 'http://127.0.0.1:8000'
 
 export const useRefereeStore = defineStore('referee', {
   state: () => ({
-    // 结构: { 1: { total: 0, plus: 0, minus: 0, name: "Referee 1" } }
     referees: {},
     isConnected: false,
-    ws: null
+    ws: null,
+
+    projectConfig: { name: '', mode: 'FREE', groups: [] },
+    currentContext: { groupName: '', contestantName: '' },
+
+    // 【新增】全局用户配置
+    appSettings: {
+      language: 'zh',
+      suppress_reset_confirm: false
+    }
   }),
 
   actions: {
-    // 1. 初始化 WebSocket 连接 (接收实时分数)
+    // --- 1. WebSocket 连接 ---
     connectWebSocket() {
       if (this.ws) return
       this.ws = new WebSocket('ws://127.0.0.1:8000/ws')
@@ -22,9 +29,12 @@ export const useRefereeStore = defineStore('referee', {
       this.ws.onmessage = (event) => {
         try {
           const msg = JSON.parse(event.data)
-          // 【修改点】同时监听 score_update 和 status_update
+          // 监听分数更新、状态更新、以及上下文更新(同步多端)
           if (msg.type === 'score_update' || msg.type === 'status_update') {
             this.updateScore(msg.payload)
+          } else if (msg.type === 'context_update') {
+            this.currentContext.groupName = msg.payload.group
+            this.currentContext.contestantName = msg.payload.contestant
           }
         } catch (e) {
           console.error("WS Message Parse Error", e)
@@ -34,58 +44,112 @@ export const useRefereeStore = defineStore('referee', {
       this.ws.onclose = () => {
         this.isConnected = false
         this.ws = null
-        // 断线自动重连
         setTimeout(() => this.connectWebSocket(), 3000)
-      }
-
-      this.ws.onerror = (err) => {
-        console.error('WS Error', err)
-        this.ws.close()
       }
     },
 
-    // 内部方法：更新本地分数状态
     updateScore(payload) {
-      // payload: { index: 1, score: {total, plus, minus}, status: {pri, sec} }
-      const {index, score, status} = payload
-
+      const { index, score, status } = payload
+      // 确保对象存在
       if (!this.referees[index]) {
-        this.referees[index] = {name: `Referee ${index}`}
+        this.referees[index] = { name: `Referee ${index}` }
       }
-
       this.referees[index] = {
         ...this.referees[index],
         total: score.total,
         plus: score.plus,
         minus: score.minus,
-        status: status // 保存状态对象 {pri: 'connected', sec: ...}
+        status: status
       }
     },
 
-    // 2. 扫描设备 (支持后台缓存 + 强制刷新)
-    // isRefresh = false: 获取后台缓存（瞬间返回）
-    // isRefresh = true:  清空缓存并重新扫描（需等待）
+    async fetchSettings() {
+      try {
+        const res = await axios.get(`${API_BASE}/api/settings`)
+        // 合并到本地状态
+        this.appSettings = { ...this.appSettings, ...res.data }
+      } catch (e) {
+        console.error("Failed to fetch settings:", e)
+      }
+    },
+
+    async updateSetting(key, value) {
+      try {
+        const payload = {}
+        payload[key] = value
+        // 乐观更新本地状态
+        this.appSettings[key] = value
+        // 发送给后端保存
+        await axios.post(`${API_BASE}/api/settings/update`, payload)
+      } catch (e) {
+        console.error("Failed to update setting:", e)
+      }
+    },
+    // --- 2. 项目与组别管理 API ---
+
+    // 创建项目
+    async createProject(name, mode) {
+      try {
+        const res = await axios.post(`${API_BASE}/api/project/create`, { name, mode })
+        // 后端返回初始配置
+        this.projectConfig = res.data.config
+        return res.data
+      } catch (e) {
+        console.error("Create Project Failed:", e)
+        throw e
+      }
+    },
+
+    // 更新组别信息 (赛事模式编辑完组别后调用)
+    async updateGroups(groups) {
+      try {
+        await axios.post(`${API_BASE}/api/project/update_groups`, { groups })
+        this.projectConfig.groups = groups
+      } catch (e) {
+        console.error("Update Groups Failed:", e)
+        throw e
+      }
+    },
+
+    // 设置当前比赛上下文 (切换选手/组别时调用)
+    async setMatchContext(groupName, contestantName) {
+      try {
+        await axios.post(`${API_BASE}/api/match/set_context`, {
+          group: groupName,
+          contestant: contestantName
+        })
+        this.currentContext.groupName = groupName
+        this.currentContext.contestantName = contestantName
+      } catch (e) {
+        console.error("Set Context Failed:", e)
+      }
+    },
+
+    // --- 3. 设备扫描与绑定 ---
+
     async scanDevices(isRefresh = false) {
       try {
         const res = await axios.get(`${API_BASE}/scan?flush=${isRefresh}`)
-        return res.data.devices || [] // 返回 [{name, address, rssi, is_target}, ...]
+        return res.data.devices || []
       } catch (e) {
         console.error("Scan failed:", e)
         throw e
       }
     },
 
-    // 3. 配置裁判并连接设备
-    async setupReferees(config) {
+    // 启动比赛：发送设备绑定信息
+    async startMatch(config) {
       try {
+        // config: { referees: [...] }
         await axios.post(`${API_BASE}/setup`, config)
 
-        // 初始化本地状态，默认状态为 connecting
+        // 重置本地状态
+        this.referees = {}
         config.referees.forEach(r => {
           this.referees[r.index] = {
             name: r.name || `Referee ${r.index}`,
             total: 0, plus: 0, minus: 0,
-            status: {pri: 'connecting', sec: r.mode === 'DUAL' ? 'connecting' : 'n/a'}
+            status: { pri: 'connecting', sec: r.mode === 'DUAL' ? 'connecting' : 'n/a' }
           }
         })
       } catch (e) {
@@ -94,11 +158,12 @@ export const useRefereeStore = defineStore('referee', {
       }
     },
 
-    // 4. 重置所有分数 (归零)
+    // --- 4. 比赛控制 ---
+
     async resetAll() {
       try {
         await axios.post(`${API_BASE}/reset`)
-        // 乐观更新：不等后端返回，直接将界面归零，体验更好
+        // 乐观更新
         for (const key in this.referees) {
           this.referees[key].total = 0
           this.referees[key].plus = 0
@@ -109,17 +174,34 @@ export const useRefereeStore = defineStore('referee', {
       }
     },
 
-    // 5. 结束比赛 (Teardown)
-    // 断开所有蓝牙连接，并清理本地状态，以便开始下一场
     async stopMatch() {
       try {
         await axios.post(`${API_BASE}/teardown`)
-        console.log("Match stopped, devices disconnected.")
       } catch (e) {
-        console.error("Failed to teardown match:", e)
+        console.error("Stop match failed:", e)
       } finally {
-        // 无论后端是否成功，前端都要清空状态
         this.referees = {}
+        this.currentContext = { groupName: '', contestantName: '' }
+      }
+    },
+    // 获取系统窗口列表
+    async fetchWindows() {
+      try {
+        const res = await axios.get(`${API_BASE}/api/windows`)
+        return res.data.windows || []
+      } catch (e) {
+        console.error("Failed to fetch windows:", e)
+        return []
+      }
+    },
+
+    // 获取特定窗口坐标
+    async getWindowBounds(title) {
+      try {
+        const res = await axios.post(`${API_BASE}/api/window/bounds`, { title })
+        return res.data
+      } catch (e) {
+        return { found: false }
       }
     }
   }

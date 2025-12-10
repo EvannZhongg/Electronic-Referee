@@ -1,4 +1,4 @@
-import { app, shell, BrowserWindow, ipcMain } from 'electron'
+import { app, shell, BrowserWindow, ipcMain, screen } from 'electron'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
@@ -47,13 +47,22 @@ const exitPyProc = () => {
   }
 }
 
+// 【新增】用于存储进入悬浮模式前的窗口状态
+let savedWindowState = {
+  bounds: null,
+  isMaximized: false,
+  isFullScreen: false
+}
+
 function createWindow() {
   const mainWindow = new BrowserWindow({
     width: 900,
     height: 670,
     show: false,
     autoHideMenuBar: true,
-    frame: false, // 建议设为无边框，方便做自定义标题栏
+    frame: false, // 无边框
+    transparent: true, // 【关键修改】开启透明窗口支持
+    hasShadow: false,  // 关闭阴影以避免透明模式下的边框残留
     ...(process.platform === 'linux' ? { icon } : {}),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
@@ -73,18 +82,69 @@ function createWindow() {
 
   // --- IPC 监听：处理窗口控制 ---
 
-  // 1. 鼠标穿透控制 (用于悬浮窗模式)
-  ipcMain.on('set-ignore-mouse-events', (event, ignore, options) => {
+  // 1. 设置窗口置顶与全屏/位置 (用于悬浮模式切换)
+  ipcMain.on('set-overlay-mode', (event, { active, bounds }) => {
     const win = BrowserWindow.fromWebContents(event.sender)
-    win.setIgnoreMouseEvents(ignore, options)
+    if (!win) return
+
+    if (active) {
+      // === 进入悬浮模式 ===
+
+      // 1. 保存当前状态 (以便退出时恢复)
+      savedWindowState.isMaximized = win.isMaximized()
+      savedWindowState.isFullScreen = win.isFullScreen()
+      if (!savedWindowState.isMaximized && !savedWindowState.isFullScreen) {
+        savedWindowState.bounds = win.getBounds()
+      }
+
+      // 2. 调整窗口以吸附目标或全屏
+      if (bounds) {
+        // 如果有目标窗口坐标，移动并调整大小以吸附
+        win.setBounds(bounds)
+      } else {
+        // 否则全屏覆盖
+        const primaryDisplay = screen.getPrimaryDisplay()
+        const { width, height } = primaryDisplay.workAreaSize
+        win.setBounds({ x: 0, y: 0, width, height })
+      }
+
+      // 3. 设置置顶和隐藏任务栏
+      win.setAlwaysOnTop(true, 'screen-saver') // 确保在最顶层 (比普通置顶更高)
+      win.setSkipTaskbar(true) // 在任务栏隐藏
+
+    } else {
+      // === 退出悬浮模式 ===
+
+      // 1. 重置属性
+      win.setAlwaysOnTop(false)
+      win.setSkipTaskbar(false)
+
+      // 2. 恢复之前的窗口状态
+      if (savedWindowState.isFullScreen) {
+        win.setFullScreen(true)
+      } else if (savedWindowState.isMaximized) {
+        win.maximize()
+      } else if (savedWindowState.bounds) {
+        win.setBounds(savedWindowState.bounds)
+      } else {
+        // 如果没有保存的状态，恢复默认大小
+        win.setSize(900, 670)
+        win.center()
+      }
+    }
   })
 
-  // 2. 窗口位置和大小更新 (用于窗口吸附功能)
-  // 前端收到 Python 发来的坐标后，通知主进程修改窗口
-  ipcMain.on('update-window-bounds', (event, bounds) => {
+  // 2. 鼠标穿透控制 (用于悬浮窗模式下点击背景穿透)
+  ipcMain.on('set-ignore-mouse', (event, ignore) => {
     const win = BrowserWindow.fromWebContents(event.sender)
     if (win) {
-      win.setBounds(bounds)
+      if (ignore) {
+        // ignore = true: 鼠标穿透（点击会点到后面的窗口），forward = true 表示把事件转发给系统
+        win.setIgnoreMouseEvents(true, { forward: true })
+      } else {
+        // ignore = false: 鼠标不穿透（可以点击 Electron 窗口内的按钮/卡片）
+        win.setIgnoreMouseEvents(false)
+      }
     }
   })
 

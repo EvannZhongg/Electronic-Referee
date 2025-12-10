@@ -46,7 +46,8 @@ ul {
 body {
   min-height: 100vh;
   color: var(--color-text);
-  background: var(--color-background);
+  /* background: var(--color-background); */
+  background: transparent; /* 显式设置为透明 */
   line-height: 1.6;
   font-family:
     Inter,

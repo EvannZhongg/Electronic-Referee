@@ -1,22 +1,15 @@
 <template>
-  <div class="app-container">
-    <NavBar />
+  <div class="app-container" :class="{ 'transparent-bg': isOverlayMode }">
+    <NavBar v-if="!isOverlayMode" />
 
     <div class="main-content">
-      <HomeView
-        v-if="currentView === 'home'"
-        @navigate="handleNavigate"
-      />
-
-      <SetupWizard
-        v-else-if="currentView === 'setup'"
-        @cancel="currentView = 'home'"
-        @finished="currentView = 'scoreboard'"
-      />
+      <HomeView v-if="currentView === 'home'" @navigate="handleNavigate" />
+      <SetupWizard v-else-if="currentView === 'setup'" @cancel="currentView = 'home'" @finished="currentView = 'scoreboard'" />
 
       <ScoreBoard
         v-else-if="currentView === 'scoreboard'"
         @stop="handleStopMatch"
+        @overlay-change="(val) => isOverlayMode = val"
       />
     </div>
   </div>
@@ -32,11 +25,9 @@ import { useRefereeStore } from './stores/refereeStore'
 
 const currentView = ref('home')
 const store = useRefereeStore()
+const isOverlayMode = ref(false) // 新增状态控制背景
 
-// 【关键修复】应用启动时立即建立 WebSocket 连接
-// 这样在 SetupWizard 页面也能收到 "Connected" 状态更新
 onMounted(() => {
-  console.log("App mounted, connecting to backend...")
   store.connectWebSocket()
 })
 
@@ -47,16 +38,27 @@ const handleNavigate = (view) => {
 const handleStopMatch = async () => {
   await store.stopMatch()
   currentView.value = 'home'
+  isOverlayMode.value = false // 退出时重置
 }
 </script>
 
 <style>
-body { margin: 0; font-family: 'Segoe UI', sans-serif; background: #1e1e1e; overflow: hidden; }
-.app-container { display: flex; flex-direction: column; height: 100vh; }
-.main-content { flex: 1; overflow-y: auto; position: relative; }
+/* 全局重置 */
+body { margin: 0; overflow: hidden; }
 
-::-webkit-scrollbar { width: 8px; }
-::-webkit-scrollbar-track { background: #2b2b2b; }
-::-webkit-scrollbar-thumb { background: #555; border-radius: 4px; }
-::-webkit-scrollbar-thumb:hover { background: #777; }
+/* 默认应用背景：深灰 */
+.app-container {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  background-color: #1e1e1e; /* 这里定义默认背景 */
+  transition: background-color 0.3s;
+}
+
+/* 【关键】悬浮模式下的透明背景 */
+.app-container.transparent-bg {
+  background-color: transparent !important;
+}
+
+.main-content { flex: 1; position: relative; overflow: hidden; }
 </style>
