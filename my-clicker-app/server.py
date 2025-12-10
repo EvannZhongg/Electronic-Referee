@@ -5,11 +5,24 @@ from dataclasses import dataclass
 from typing import List, Dict, Optional
 from contextlib import asynccontextmanager
 
+import sys
+import os
+
+# 确保能找到 utils 模块
+current_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.dirname(current_dir)
+if project_root not in sys.path:
+    sys.path.append(project_root)
+
 import uvicorn
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from bleak import BleakScanner, BleakClient
 import pygetwindow as gw
+
+# 引入配置模块
+from utils.app_settings import app_settings
+from utils.storage import storage_manager
 
 # ==========================================================
 # 配置与协议
@@ -22,6 +35,14 @@ STANDARD_DEVICE_NAME_UUID = "00002a00-0000-1000-8000-00805f9b34fb"
 
 DEVICE_NAME_PREFIX = "Counter-"
 
+# ==========================================================
+# 全局比赛状态 (State Management)
+# ==========================================================
+match_state = {
+    "current_group": "Free Mode", # 默认为自由模式，防止空指针
+    "current_contestant": "",
+    "config": {}
+}
 
 @dataclass
 class ClickerEvent:
@@ -310,22 +331,46 @@ class HeadlessReferee:
 
   def _on_pri_data(self, cur, typ, p, m, ts):
     self.pri_cache = [p, m]
+    self._record_log("PRIMARY", cur, typ, p, m, ts)
     self._update_score()
 
   def _on_sec_data(self, cur, typ, p, m, ts):
     self.sec_cache = [p, m]
+    self._record_log("SECONDARY", cur, typ, p, m, ts)
     self._update_score()
+
+  def _record_log(self, role, cur, typ, p, m, ts):
+    """统一日志记录入口"""
+    # 获取当前上下文
+    group = match_state.get("current_group") or "Unknown_Group"
+    contestant = match_state.get("current_contestant") or "Unknown_Player"
+
+    # 调用新的 storage 接口，传入 group_name
+    storage_manager.log_data(group, self.index, role, (cur, typ, p, m, ts), contestant)
 
   def _update_score(self):
     if self.mode == "SINGLE":
-      self.score = {"total": self.pri_cache[0] - self.pri_cache[1], "plus": self.pri_cache[0],
-                    "minus": self.pri_cache[1]}
-    else:
+      # 单机模式：Plus - Minus
       self.score = {
-        "total": self.pri_cache[0] - self.sec_cache[0],
+        "total": self.pri_cache[0] - self.pri_cache[1],
         "plus": self.pri_cache[0],
-        "minus": self.pri_cache[1] + self.sec_cache[1]
+        "minus": self.pri_cache[1]
       }
+    else:
+      # 【关键修改】双机模式逻辑
+      # 要求：主设备的 TotalPlus 作为选手正分
+      #      副设备的 TotalPlus 作为选手负分 (因为副设备是专门用来扣分的)
+      #      总分 = 正分 - 负分
+
+      pri_plus = self.pri_cache[0]  # 主设备的总按键数 (Struct中的total_plus)
+      sec_plus = self.sec_cache[0]  # 副设备的总按键数 (Struct中的total_plus)
+
+      self.score = {
+        "total": pri_plus - sec_plus,
+        "plus": pri_plus,
+        "minus": sec_plus  # 这里将副设备的 total_plus 视为选手的 total_minus
+      }
+
     self._broadcast_update("score_update")
 
   def _broadcast_update(self, msg_type):
@@ -362,6 +407,17 @@ async def broadcast_json(data):
     except:
       pass
 
+# 1. 获取全局设置
+@app.get("/api/settings")
+async def get_settings():
+    return app_settings.settings
+
+# 2. 更新全局设置
+@app.post("/api/settings/update")
+async def update_settings(data: dict):
+    for k, v in data.items():
+        app_settings.set(k, v)
+    return {"status": "ok", "settings": app_settings.settings}
 
 @app.websocket("/ws")
 async def ws_endpoint(websocket: WebSocket):
@@ -466,6 +522,79 @@ async def reset():
   tasks = [r.reset() for r in referees.values()]
   if tasks: await asyncio.gather(*tasks)
   return {"status": "ok"}
+
+
+@app.post("/api/project/create")
+async def create_project(data: dict):
+  # data: { "name": "xxx", "mode": "TOURNAMENT" | "FREE" }
+  config = storage_manager.create_project(data.get("name"), data.get("mode"))
+  match_state["config"] = config
+  return {"status": "ok", "config": config}
+
+
+# 2. 更新分组信息 (添加/编辑组别、裁判数、选手名单)
+@app.post("/api/project/update_groups")
+async def update_groups(data: dict):
+  # data: { "groups": [ ... ] }
+  if not match_state["config"]:
+    return {"status": "error", "msg": "No active project"}
+
+  match_state["config"]["groups"] = data.get("groups", [])
+  storage_manager.save_config(match_state["config"])
+  return {"status": "ok"}
+
+
+# 3. 设置当前上下文 (切换到哪个组、哪个选手)
+@app.post("/api/match/set_context")
+async def set_context(data: dict):
+  # data: { "group": "GroupA", "contestant": "Player1" }
+  match_state["current_group"] = data.get("group")
+  match_state["current_contestant"] = data.get("contestant")
+  print(f"Context updated: {match_state['current_contestant']}")
+
+  # 广播给前端，确保多端同步
+  await broadcast_json({
+    "type": "context_update",
+    "payload": {
+      "group": match_state["current_group"],
+      "contestant": match_state["current_contestant"]
+    }
+  })
+  return {"status": "ok"}
+
+
+# 4. 获取当前项目配置 (用于恢复)
+@app.get("/api/project/current")
+async def get_current_project():
+  return match_state["config"]
+
+@app.get("/api/windows")
+async def get_windows():
+    """获取所有可见窗口的标题"""
+    try:
+        # 过滤掉空标题和 default IME 等系统窗口
+        titles = [t for t in gw.getAllTitles() if t.strip()]
+        return {"windows": titles}
+    except Exception as e:
+        print(f"List windows error: {e}")
+        return {"windows": []}
+
+@app.post("/api/window/bounds")
+async def get_window_bounds(data: dict):
+    """获取指定标题窗口的坐标和大小"""
+    title = data.get("title")
+    try:
+        wins = gw.getWindowsWithTitle(title)
+        if wins:
+            w = wins[0]
+            # 返回 Electron setBounds 需要的格式
+            return {
+                "found": True,
+                "bounds": {"x": w.left, "y": w.top, "width": w.width, "height": w.height}
+            }
+        return {"found": False}
+    except Exception as e:
+        return {"found": False}
 
 
 if __name__ == "__main__":
