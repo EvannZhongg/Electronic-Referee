@@ -6,7 +6,7 @@
     </div>
 
     <div class="cards-grid">
-      <div class="card new-match" @click="$emit('navigate', 'setup')">
+      <div class="card new-match" @click="handleNewMatch">
         <div class="icon-circle">
           <Plus :size="32" />
         </div>
@@ -32,7 +32,7 @@
               <div class="p-date">{{ p.created_at }}</div>
             </div>
             <div class="p-actions">
-              <button class="btn-small btn-view" @click="handleViewDetails(p)">View Details</button>
+              <button class="btn-small btn-view" @click="handleViewDetails(p)">View</button>
               <button class="btn-small btn-continue" @click="handleContinue(p)">Continue</button>
             </div>
           </div>
@@ -56,6 +56,12 @@ const store = useRefereeStore()
 const showHistoryModal = ref(false)
 const projects = ref([])
 
+// 新建比赛：必须清理旧的 Store 状态
+const handleNewMatch = () => {
+  store.clearLocalConfig()
+  emit('navigate', 'setup')
+}
+
 const openHistory = async () => {
   projects.value = await store.fetchHistoryProjects()
   showHistoryModal.value = true
@@ -63,23 +69,21 @@ const openHistory = async () => {
 
 const handleViewDetails = (project) => {
   showHistoryModal.value = false
-  // 触发父组件切换到 ReportView，并传递项目目录名
   emit('view-report', project.dir_name)
 }
 
+// 继续比赛：加载状态，然后进入 Setup
 const handleContinue = async (project) => {
   const success = await store.loadProject(project.dir_name)
   if (success) {
     showHistoryModal.value = false
-    // 继续比赛：通常跳转到 SetupWizard 的第三步（设备绑定）或者 ScoreBoard
-    // 这里建议跳转到 Setup，因为设备连接断开后需要重新绑定
     emit('navigate', 'setup')
   }
 }
 </script>
 
 <style scoped lang="scss">
-/* 复用原有样式 */
+/* 保持原有 CSS */
 .home-view { padding: 40px; color: white; animation: fadeIn 0.5s; }
 .hero-section { margin-bottom: 40px; h1 { font-size: 2.5rem; } p { color: #888; } }
 .cards-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 30px; }
@@ -87,8 +91,6 @@ const handleContinue = async (project) => {
 .icon-circle { width: 60px; height: 60px; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin-bottom: 20px; }
 .card.new-match .icon-circle { color: #2ecc71; background: rgba(46, 204, 113, 0.1); }
 .card.history .icon-circle { color: #f39c12; background: rgba(243, 156, 18, 0.1); }
-
-/* Modal Styles */
 .modal-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.8); display: flex; justify-content: center; align-items: center; z-index: 2000; }
 .modal-content { background: #252526; width: 600px; max-height: 80vh; border-radius: 8px; padding: 20px; display: flex; flex-direction: column; }
 .project-list { flex: 1; overflow-y: auto; margin: 15px 0; border: 1px solid #333; border-radius: 4px; }

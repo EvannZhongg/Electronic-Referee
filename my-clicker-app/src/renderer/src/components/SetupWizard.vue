@@ -42,7 +42,6 @@
 
     <div v-if="currentStep === 2 && form.mode === 'TOURNAMENT'" class="step-content group-manager">
       <h2>{{ $t('wiz_s2_title') }}</h2>
-
       <div class="manager-layout">
         <div class="sidebar">
           <div class="list-header">{{ $t('wiz_list_title') }}</div>
@@ -61,41 +60,29 @@
         </div>
 
         <div class="main-edit" v-if="currentEditGroup">
-
           <div class="edit-header">
             <span class="edit-title">CONFIGURATION</span>
-            <button
-              class="btn-delete-group"
-              @click="deleteCurrentGroup"
-              v-if="groups.length > 1"
-              :title="$t('btn_del_group')"
-            >
+            <button class="btn-delete-group" @click="deleteCurrentGroup" v-if="groups.length > 1">
               <Trash2 :size="16" /> {{ $t('btn_del_group') }}
             </button>
           </div>
-
           <div class="form-group">
             <label>{{ $t('wiz_lbl_grp_name') }}</label>
             <input v-model="currentEditGroup.name" type="text" />
           </div>
-
           <div class="form-group">
             <label>{{ $t('wiz_lbl_grp_ref') }}</label>
             <input type="number" v-model.number="currentEditGroup.refCount" min="1" max="10" />
-            <small class="hint">{{ $t('wiz_hint_ref') }}</small>
           </div>
-
           <div class="form-group">
             <label>{{ $t('wiz_lbl_player') }}</label>
             <textarea
               v-model="currentEditGroup.rawPlayers"
               rows="6"
-              :placeholder="$t('wiz_ph_player')"
               style="resize: vertical; min-height: 100px;"
             ></textarea>
           </div>
-
-          </div>
+        </div>
       </div>
 
       <div class="actions">
@@ -107,14 +94,12 @@
     <div v-if="currentStep === 3" class="step-content">
       <div class="scan-bar">
         <h2>{{ form.mode === 'TOURNAMENT' ? 'Step 3: ' : 'Step 2: ' }}{{ $t('wiz_s3_title') }}</h2>
-
         <div v-if="form.mode === 'TOURNAMENT'" class="target-group-select">
           <label>{{ $t('wiz_target_group') }}</label>
           <select v-model="selectedGroupToRun" @change="refreshBindingSlots">
             <option v-for="g in groups" :key="g.name" :value="g">{{ g.name }} ({{ g.refCount }} Refs)</option>
           </select>
         </div>
-
         <div class="scan-controls">
           <span v-if="isScanning" class="status scanning">{{ $t('status_scanning') }}</span>
           <span v-else class="status">{{ $t('status_found', { count: scannedDevices.length }) }}</span>
@@ -192,9 +177,8 @@
 </template>
 
 <script setup>
-import { ref, reactive } from 'vue'
+import { ref, reactive, onMounted, computed } from 'vue'
 import { useRefereeStore } from '../stores/refereeStore'
-// 【新增】引入图标
 import { Trash2 } from 'lucide-vue-next'
 
 const emit = defineEmits(['cancel', 'finished'])
@@ -216,27 +200,72 @@ const isConnecting = ref(false)
 const showForceEntry = ref(false)
 let connectTimer = null
 
-// --- Methods ---
+const isResuming = computed(() => !!store.projectConfig.created_at)
+
+onMounted(() => {
+  if (isResuming.value) {
+    console.log("Resuming project:", store.projectConfig)
+    form.projectName = store.projectConfig.project_name
+    form.mode = store.projectConfig.mode
+
+    // 恢复组别
+    if (store.projectConfig.groups && store.projectConfig.groups.length > 0) {
+      groups.value = store.projectConfig.groups.map(g => ({
+        ...g,
+        rawPlayers: (g.players || []).join('\n')
+      }))
+      currentEditGroup.value = groups.value[0]
+      selectedGroupToRun.value = groups.value[0]
+    }
+
+    // 恢复裁判数量设置（Free Mode）
+    if (form.mode === 'FREE' && groups.value[0]) {
+      form.refereeCount = groups.value[0].refCount
+    }
+
+    currentStep.value = 1
+  }
+})
 
 const handleStep1Next = async () => {
-  await store.createProject(form.projectName, form.mode)
-  groups.value = []
-  selectedGroupToRun.value = null
+  // 1. 如果是新项目，发送请求创建
+  if (!isResuming.value) {
+    await store.createProject(form.projectName, form.mode)
+  } else {
+    // 【关键修改】恢复模式下，手动更新 Store 中的模式和名称，
+    // 确保 ScoreBoard 能获取到用户在 UI 上最新选择的模式 (Free/Tournament)
+    store.projectConfig.mode = form.mode
+    store.projectConfig.project_name = form.projectName
+  }
 
+  // 2. 组别初始化：如果是空项目（无论新建还是历史），都初始化默认组
+  if (groups.value.length === 0) {
+    if (form.mode === 'TOURNAMENT') {
+      addNewGroup()
+    } else {
+      const freeGroup = {
+        name: 'Free Mode',
+        refCount: form.refereeCount,
+        rawPlayers: 'Player 1\nPlayer 2\nPlayer 3',
+        players: ['Player 1', 'Player 2', 'Player 3'],
+        referees: []
+      }
+      groups.value = [freeGroup]
+    }
+  } else {
+    // 如果是恢复且已有组，允许更新自由模式的裁判数
+    if (isResuming.value && form.mode === 'FREE') {
+      groups.value[0].refCount = form.refereeCount
+    }
+  }
+
+  // 3. 路由跳转
   if (form.mode === 'TOURNAMENT') {
-    if (groups.value.length === 0) addNewGroup()
     currentStep.value = 2
   } else {
-    const freeGroup = {
-      name: 'Free Mode',
-      refCount: form.refereeCount,
-      rawPlayers: 'Player 1\nPlayer 2\nPlayer 3',
-      players: ['Player 1', 'Player 2', 'Player 3'],
-      referees: []
-    }
-    groups.value = [freeGroup]
+    // Free Mode
     await store.updateGroups(groups.value)
-    selectedGroupToRun.value = freeGroup
+    selectedGroupToRun.value = groups.value[0]
     refreshBindingSlots()
     currentStep.value = 3
     if (scannedDevices.value.length === 0) startScan(false)
@@ -272,7 +301,6 @@ const handleStep2Next = async () => {
   })
   await store.updateGroups(groups.value)
   if (groups.value.length > 0) selectedGroupToRun.value = groups.value[0]
-
   refreshBindingSlots()
   currentStep.value = 3
   if (scannedDevices.value.length === 0) startScan(false)
@@ -283,8 +311,16 @@ const refreshBindingSlots = () => {
   const targetGroup = selectedGroupToRun.value
   const count = targetGroup.refCount
 
-  if (targetGroup.referees && targetGroup.referees.length === count) {
+  if (targetGroup.referees && targetGroup.referees.length > 0) {
     bindings.value = JSON.parse(JSON.stringify(targetGroup.referees))
+    if (bindings.value.length < count) {
+       for (let i = bindings.value.length; i < count; i++) {
+         bindings.value.push({ index: i + 1, name: `Referee ${i + 1}`, mode: 'SINGLE', pri_addr: '', sec_addr: '' })
+       }
+    }
+    if (bindings.value.length > count) {
+       bindings.value = bindings.value.slice(0, count)
+    }
   } else {
     bindings.value = Array.from({ length: count }, (_, i) => ({
       index: i + 1,
@@ -301,11 +337,8 @@ const startScan = async (isRefresh = true) => {
   try {
     const allDevices = await store.scanDevices(isRefresh)
     scannedDevices.value = allDevices
-  } catch (e) {
-    console.error("Scan error", e)
-  } finally {
-    isScanning.value = false
-  }
+  } catch (e) { console.error("Scan error", e) }
+  finally { isScanning.value = false }
 }
 
 const getAvailableDevices = (currentIndex, currentType) => {
@@ -325,8 +358,6 @@ const goBackFromStep3 = () => {
   if (form.mode === 'TOURNAMENT') {
     currentStep.value = 2
   } else {
-    groups.value = []
-    selectedGroupToRun.value = null
     currentStep.value = 1
   }
 }
@@ -338,7 +369,11 @@ const finishSetup = async () => {
   }
 
   const groupName = selectedGroupToRun.value.name
-  const firstPlayer = selectedGroupToRun.value.players[0] || "Player 1"
+  let firstPlayer = selectedGroupToRun.value.players[0] || "Player 1"
+  if (store.currentContext.contestantName && selectedGroupToRun.value.players.includes(store.currentContext.contestantName)) {
+      firstPlayer = store.currentContext.contestantName
+  }
+
   await store.setMatchContext(groupName, firstPlayer)
   await store.startMatch({ referees: bindings.value })
 
@@ -397,414 +432,21 @@ const confirmForceEnter = () => {
 </script>
 
 <style scoped lang="scss">
-.setup-wizard {
-  padding: 30px;
-  color: white;
-  max-width: 900px;
-  margin: 0 auto;
-}
-
-.steps-header {
-  display: flex;
-  align-items: center;
-  margin-bottom: 30px;
-
-  .step {
-    font-size: 1.1rem;
-    color: #666;
-    font-weight: bold;
-
-    &.active {
-      color: #3498db;
-    }
-  }
-
-  .divider {
-    flex: 1;
-    height: 1px;
-    background: #333;
-    margin: 0 15px;
-  }
-}
-
-.step-content {
-  animation: fadeIn 0.3s;
-
-  h2 {
-    margin-bottom: 20px;
-    color: #eee;
-  }
-}
-
-/* Form Styles */
-.form-group {
-  margin-bottom: 20px;
-
-  label {
-    display: block;
-    margin-bottom: 8px;
-    color: #ccc;
-  }
-
-  input, textarea, select {
-    width: 100%;
-    padding: 10px;
-    background: #252526;
-    border: 1px solid #3d3d3d;
-    color: white;
-    border-radius: 4px;
-    outline: none;
-
-    &:focus {
-      border-color: #3498db;
-    }
-  }
-
-  .hint {
-    color: #666;
-    font-size: 0.8rem;
-    margin-top: 4px;
-    display: block;
-  }
-}
-
-.radio-group {
-  display: flex;
-  gap: 20px;
-
-  label {
-    cursor: pointer;
-    padding: 10px 20px;
-    background: #252526;
-    border: 1px solid #3d3d3d;
-    border-radius: 4px;
-    transition: all 0.2s;
-
-    &.checked {
-      background: #3498db;
-      border-color: #3498db;
-    }
-
-    input {
-      display: none;
-    }
-  }
-}
-
-/* Group Manager Layout */
-.group-manager {
-  .manager-layout {
-    display: flex;
-    gap: 20px;
-    height: 400px;
-  }
-
-  .sidebar {
-    width: 200px;
-    background: #252526;
-    border: 1px solid #3d3d3d;
-    display: flex;
-    flex-direction: column;
-
-    .list-header {
-      padding: 10px;
-      background: #333;
-      font-weight: bold;
-      text-align: center;
-    }
-
-    .group-list {
-      flex: 1;
-      overflow-y: auto;
-    }
-
-    .group-item {
-      padding: 10px;
-      cursor: pointer;
-      border-bottom: 1px solid #333;
-
-      &:hover {
-        background: #2f2f2f;
-      }
-
-      &.active {
-        background: #3498db;
-        color: white;
-      }
-    }
-
-    .btn-add-group {
-      padding: 10px;
-      background: #2ecc71;
-      border: none;
-      color: white;
-      cursor: pointer;
-      font-weight: bold;
-
-      &:hover {
-        background: #27ae60;
-      }
-    }
-  }
-
-.main-edit {
-    flex: 1;
-    background: #252526;
-    padding: 20px;
-    border: 1px solid #3d3d3d;
-    display: flex;
-    flex-direction: column;
-
-    /* 【修改点 1】保持垂直滚动，强制隐藏水平滚动 */
-    overflow-y: auto;
-    overflow-x: hidden;
-  }
-}
-
-/* 【新增】编辑区域 Header 样式 */
-.edit-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 20px;
-  padding-bottom: 10px;
-  border-bottom: 1px solid #3d3d3d;
-}
-
-.edit-title {
-  font-weight: bold;
-  color: #888;
-  font-size: 0.9rem;
-  text-transform: uppercase;
-}
-
-.btn-delete-group {
-  background: transparent;
-  border: 1px solid #c0392b;
-  color: #c0392b;
-  padding: 4px 10px;
-  border-radius: 4px;
-  font-size: 0.8rem;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  transition: all 0.2s;
-  cursor: pointer;
-}
-
-.btn-delete-group:hover {
-  background: #c0392b;
-  color: white;
-}
-
-/* Device Binding Styles */
-.scan-bar {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 20px;
-
-  .target-group-select {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-
-    select {
-      width: 200px;
-      padding: 5px;
-    }
-  }
-}
-
-.device-list-container {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-  gap: 15px;
-  margin-bottom: 20px;
-  max-height: 400px;
-  overflow-y: auto;
-}
-
-.ref-card {
-  background: #252526;
-  border: 1px solid #3d3d3d;
-  border-radius: 6px;
-
-  .card-header {
-    background: #333;
-    padding: 8px 12px;
-    font-weight: bold;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-
-    .ref-name-input {
-      width: 120px;
-      padding: 2px 5px;
-      font-size: 0.9rem;
-      background: #222;
-      border: 1px solid #444;
-    }
-  }
-
-  .card-body {
-    padding: 10px;
-  }
-
-  .row {
-    margin-bottom: 8px;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-
-    label {
-      width: 70px;
-      font-size: 0.85rem;
-      color: #888;
-      margin: 0;
-    }
-
-    select {
-      width: 180px;
-      padding: 4px;
-      font-size: 0.9rem;
-    }
-  }
-}
-
-/* Action Buttons */
-.actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 15px;
-  margin-top: 20px;
-  padding-top: 15px;
-  border-top: 1px solid #333;
-
-  button {
-    padding: 8px 20px;
-    border-radius: 4px;
-    border: none;
-    cursor: pointer;
-    font-weight: bold;
-
-    &.btn-primary {
-      background: #3498db;
-      color: white;
-
-      &:hover {
-        background: #2980b9;
-      }
-    }
-
-    &.btn-secondary {
-      background: #555;
-      color: white;
-
-      &:hover {
-        background: #666;
-      }
-    }
-
-    &.btn-success {
-      background: #2ecc71;
-      color: white;
-
-      &:hover {
-        background: #27ae60;
-      }
-    }
-
-    &.btn-scan {
-      background: #f39c12;
-      color: white;
-
-      &:hover {
-        background: #d35400;
-      }
-    }
-
-    &:disabled {
-      opacity: 0.5;
-      cursor: not-allowed;
-    }
-  }
-}
-
-/* Overlay */
-.overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: rgba(0, 0, 0, 0.8);
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  z-index: 1000;
-}
-
-.connect-dialog {
-  background: #252526;
-  padding: 20px;
-  width: 350px;
-  border-radius: 8px;
-  text-align: center;
-}
-
-.status-row {
-  display: flex;
-  justify-content: space-between;
-  margin-bottom: 8px;
-  border-bottom: 1px solid #333;
-  padding-bottom: 4px;
-
-  .tag {
-    font-size: 0.8rem;
-    padding: 2px 6px;
-    border-radius: 3px;
-    margin-left: 5px;
-
-    &.connected {
-      background: #27ae60;
-    }
-
-    &.connecting {
-      background: #f39c12;
-    }
-
-    &.error {
-      background: #c0392b;
-    }
-
-    &.waiting {
-      background: #555;
-    }
-  }
-}
-
-.warn {
-  color: #e74c3c;
-  margin: 10px 0;
-}
-
-.dialog-actions {
-  margin-top: 15px;
-
-  button {
-    margin: 0 5px;
-  }
-}
-
-@keyframes fadeIn {
-  from {
-    opacity: 0;
-    transform: translateY(10px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
+/* 保持原有样式 */
+.setup-wizard { padding: 30px; color: white; max-width: 900px; margin: 0 auto; }
+.steps-header { display: flex; align-items: center; margin-bottom: 30px; .step { font-size: 1.1rem; color: #666; font-weight: bold; &.active { color: #3498db; } } .divider { flex: 1; height: 1px; background: #333; margin: 0 15px; } }
+.step-content { animation: fadeIn 0.3s; h2 { margin-bottom: 20px; color: #eee; } }
+.form-group { margin-bottom: 20px; label { display: block; margin-bottom: 8px; color: #ccc; } input, textarea, select { width: 100%; padding: 10px; background: #252526; border: 1px solid #3d3d3d; color: white; border-radius: 4px; outline: none; &:focus { border-color: #3498db; } } .hint { color: #888; font-size: 0.8rem; margin-top: 4px; display: block; } }
+.radio-group { display: flex; gap: 20px; label { cursor: pointer; padding: 10px 20px; background: #252526; border: 1px solid #3d3d3d; border-radius: 4px; transition: all 0.2s; &.checked { background: #3498db; border-color: #3498db; } input { display: none; } } }
+.group-manager { .manager-layout { display: flex; gap: 20px; height: 400px; } .sidebar { width: 200px; background: #252526; border: 1px solid #3d3d3d; display: flex; flex-direction: column; .list-header { padding: 10px; background: #333; font-weight: bold; text-align: center; } .group-list { flex: 1; overflow-y: auto; } .group-item { padding: 10px; cursor: pointer; border-bottom: 1px solid #333; &:hover { background: #2f2f2f; } &.active { background: #3498db; color: white; } } .btn-add-group { padding: 10px; background: #2ecc71; border: none; color: white; cursor: pointer; font-weight: bold; &:hover { background: #27ae60; } } } .main-edit { flex: 1; background: #252526; padding: 20px; border: 1px solid #3d3d3d; display: flex; flex-direction: column; overflow-y: auto; overflow-x: hidden; } }
+.edit-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; padding-bottom: 10px; border-bottom: 1px solid #3d3d3d; }
+.scan-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; .target-group-select { display: flex; align-items: center; gap: 10px; select { width: 200px; padding: 5px; } } }
+.device-list-container { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 15px; margin-bottom: 20px; max-height: 400px; overflow-y: auto; }
+.ref-card { background: #252526; border: 1px solid #3d3d3d; border-radius: 6px; .card-header { background: #333; padding: 8px 12px; font-weight: bold; display: flex; justify-content: space-between; align-items: center; .ref-name-input { width: 120px; padding: 2px 5px; font-size: 0.9rem; background: #222; border: 1px solid #444; } } .card-body { padding: 10px; } .row { margin-bottom: 8px; display: flex; align-items: center; justify-content: space-between; label { width: 70px; font-size: 0.85rem; color: #888; margin: 0; } select { width: 180px; padding: 4px; font-size: 0.9rem; } } }
+.actions { display: flex; justify-content: flex-end; gap: 15px; margin-top: 20px; padding-top: 15px; border-top: 1px solid #333; button { padding: 8px 20px; border-radius: 4px; border: none; cursor: pointer; font-weight: bold; &.btn-primary { background: #3498db; color: white; &:hover { background: #2980b9; } } &.btn-secondary { background: #555; color: white; &:hover { background: #666; } } &.btn-success { background: #2ecc71; color: white; &:hover { background: #27ae60; } } &.btn-scan { background: #f39c12; color: white; &:hover { background: #d35400; } } &:disabled { opacity: 0.5; cursor: not-allowed; } } }
+.overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0, 0, 0, 0.8); display: flex; justify-content: center; align-items: center; z-index: 1000; }
+.connect-dialog { background: #252526; padding: 20px; width: 350px; border-radius: 8px; text-align: center; }
+.status-row { display: flex; justify-content: space-between; margin-bottom: 8px; border-bottom: 1px solid #333; padding-bottom: 4px; .tag { font-size: 0.8rem; padding: 2px 6px; border-radius: 3px; margin-left: 5px; &.connected { background: #27ae60; } &.connecting { background: #f39c12; } &.error { background: #c0392b; } &.waiting { background: #555; } } }
+.dialog-actions { margin-top: 15px; button { margin: 0 5px; } }
+@keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
 </style>

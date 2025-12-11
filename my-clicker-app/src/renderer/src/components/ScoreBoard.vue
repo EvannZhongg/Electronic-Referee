@@ -6,13 +6,10 @@
           <span class="icon">←</span> Stop
         </button>
       </div>
-
       <div class="header-section center">
         <div class="group-label">{{ store.currentContext.groupName || 'Free Mode' }}</div>
-
         <div class="player-navigator">
           <button class="nav-btn" @click="manualChange(-1)">◀</button>
-
           <select class="player-select" :value="store.currentContext.contestantName" @change="onSelectPlayer">
             <option
               v-for="p in currentGroupPlayers"
@@ -23,26 +20,19 @@
               {{ p }} {{ store.scoredPlayers.has(p) ? '✔' : '' }}
             </option>
           </select>
-
           <button class="nav-btn" @click="manualChange(1)">▶</button>
         </div>
       </div>
-
       <div class="header-section right">
         <div class="toggle-switch" title="Auto Next">
           <input type="checkbox" id="autoSwitch" v-model="isAutoNext">
-          <label for="autoSwitch" class="toggle-label">
-            <span class="toggle-switch-handle"></span>
-          </label>
+          <label for="autoSwitch" class="toggle-label"><span class="toggle-switch-handle"></span></label>
           <span class="toggle-text">Auto</span>
         </div>
-
         <button class="btn-tool btn-overlay" @click="openWindowSelector">🔳 Overlay</button>
-
         <button class="btn-tool btn-reset" @click="handleNextClick">
             {{ isAllDone ? '🏁 Finish' : '⏭ Next' }}
         </button>
-
         <button class="btn-tool btn-reset-only" @click="handleResetOnly" title="Reset current only">⚠ Zero</button>
       </div>
     </div>
@@ -57,9 +47,7 @@
           </div>
         </div>
         <div class="score-main">{{ ref.total }}</div>
-        <div class="score-detail">
-          <span class="plus">+{{ ref.plus }}</span> / <span class="minus">-{{ ref.minus }}</span>
-        </div>
+        <div class="score-detail"><span class="plus">+{{ ref.plus }}</span> / <span class="minus">-{{ ref.minus }}</span></div>
       </div>
     </div>
 
@@ -93,10 +81,13 @@
     <div v-if="showAllDoneDialog" class="modal-overlay">
       <div class="modal-content">
         <h3>🎉 All Scored!</h3>
-        <p>All contestants in this group have been scored.</p>
+        <p>All contestants have been scored.</p>
+        <p v-if="store.projectConfig.mode==='TOURNAMENT'" style="font-size:0.9rem;color:#aaa">Do you want to re-judge from the first player?</p>
         <div class="modal-actions vertical-actions">
           <button class="btn-confirm large" @click="finishMatch">Save & Exit Match</button>
-          <button class="btn-cancel large" @click="overwriteNext">Overwrite Next (Re-judge)</button>
+          <button class="btn-cancel large" @click="continueLoopMatch">
+             {{ store.projectConfig.mode==='FREE' ? 'Continue (Add Player)' : 'Continue (Start Over)' }}
+          </button>
         </div>
       </div>
     </div>
@@ -104,13 +95,12 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted, computed, watch } from 'vue'
+import { ref, onMounted, onUnmounted, computed } from 'vue'
 import { useRefereeStore } from '../stores/refereeStore'
 
 const emit = defineEmits(['stop'])
 const store = useRefereeStore()
 
-// 状态
 const isAutoNext = ref(false)
 const showResetDialog = ref(false)
 const showAllDoneDialog = ref(false)
@@ -119,77 +109,87 @@ const showWindowSelector = ref(false)
 const windowList = ref([])
 const selectedTargetWindow = ref("")
 
-// 计算属性
 const currentGroupPlayers = computed(() => {
   const gName = store.currentContext.groupName
   const group = store.projectConfig.groups.find(g => g.name === gName)
   return group ? group.players : []
 })
 
-const currentIdx = computed(() => {
-  return currentGroupPlayers.value.indexOf(store.currentContext.contestantName)
-})
+const currentIdx = computed(() => currentGroupPlayers.value.indexOf(store.currentContext.contestantName))
+const isAllDone = computed(() => currentGroupPlayers.value.length > 0 && currentGroupPlayers.value.every(p => store.scoredPlayers.has(p)))
 
-const isAllDone = computed(() => {
-  const players = currentGroupPlayers.value
-  if (players.length === 0) return false
-  return players.every(p => store.scoredPlayers.has(p))
-})
-
-onMounted(() => {
+onMounted(async () => {
   store.connectWebSocket()
   store.fetchSettings()
   if (store.currentContext.groupName) {
-    store.fetchScoredPlayers(store.currentContext.groupName)
+    await store.fetchScoredPlayers(store.currentContext.groupName)
+    // 【关键】初始化状态检查
+    initResumeState()
   }
   window.addEventListener('keydown', handleKeydown)
 })
 
 onUnmounted(() => { window.removeEventListener('keydown', handleKeydown) })
 
-// --- 核心修复区域 ---
-
-// 1. 点击 Next 或 自动跳转
-const handleNextClick = () => {
-  if (store.appSettings.suppress_reset_confirm || isAutoNext.value) {
-    confirmSmartNext()
+// --- 核心：初始化与恢复逻辑 ---
+const initResumeState = async () => {
+  // 如果所有选手都已打分（例如继续比赛时），需要根据模式决定行为
+  if (isAllDone.value) {
+    if (store.projectConfig.mode === 'FREE') {
+      // 自由模式：自动追加一位选手并开始
+      await changePlayer(1)
+    } else {
+      // 赛事模式：弹窗提示是否重头开始
+      showAllDoneDialog.value = true
+    }
   } else {
-    dontAskAgainTemp.value = false
-    showResetDialog.value = true
+    // 寻找第一个未打分的选手
+    const unscored = findNextUnscoredPlayer()
+    if (unscored) {
+      // 切换过去，不重置设备（保留上下文即可，设备默认0）
+      await switchContext(unscored)
+    }
   }
 }
 
-// 2. 执行跳转逻辑 (关键修复：先切换，再归零)
+// --- 核心：下一位逻辑 ---
+const handleNextClick = () => {
+  if (store.appSettings.suppress_reset_confirm || isAutoNext.value) confirmSmartNext()
+  else { dontAskAgainTemp.value = false; showResetDialog.value = true }
+}
+
 const confirmSmartNext = async () => {
   if (dontAskAgainTemp.value) store.updateSetting('suppress_reset_confirm', true)
   showResetDialog.value = false
 
-  // 标记当前选手已完成
   const currentName = store.currentContext.contestantName
   store.markAsScored(currentName)
 
-  // 查找下一位
+  // 1. 查找下一位
   const nextPlayer = findNextUnscoredPlayer()
 
   if (nextPlayer) {
-    // 【关键修改点】
-    // 1. 先切换上下文到下一位选手 (Backend 会将日志目标指向新选手)
+    // 找到未打分：切换 -> 归零
     await switchContext(nextPlayer)
-
-    // 2. 然后再归零设备 (产生的 0 分日志会记录在新选手名下，作为初始状态)
-    // 这样上一位选手的最后一条日志就是他的最终得分
     await store.resetAll()
   } else {
-    // 如果没有下一位了 (全部完成)，千万不要 resetAll，否则最后一位选手成绩会变 0
-    showAllDoneDialog.value = true
+    // 全部已完成
+    if (store.projectConfig.mode === 'FREE') {
+       // 自由模式：自动创建下一位
+       await changePlayer(1)
+       await store.resetAll()
+    } else {
+       // 赛事模式：再次提示（实现“下一位的时候再次提示”）
+       showAllDoneDialog.value = true
+    }
   }
 }
 
-// 算法：寻找下一个未打分的
 const findNextUnscoredPlayer = () => {
   const players = currentGroupPlayers.value
   const len = players.length
   if (len === 0) return null
+  // 仅向后查找
   for (let i = 1; i < len; i++) {
     const idx = (currentIdx.value + i) % len
     const pName = players[idx]
@@ -198,88 +198,76 @@ const findNextUnscoredPlayer = () => {
   return null
 }
 
-// --- 其他操作 ---
-
-const finishMatch = () => {
+// --- 循环打分/继续 ---
+const continueLoopMatch = async () => {
   showAllDoneDialog.value = false
-  emit('stop') // 正常退出，不归零，保留最后一位选手的成绩
-}
-
-const overwriteNext = async () => {
-  showAllDoneDialog.value = false
-  // 逻辑：覆盖下一位 (循环回到第一个或下一个)
-  const players = currentGroupPlayers.value
-  const nextIdx = (currentIdx.value + 1) % players.length
-  const nextPlayer = players[nextIdx]
-
-  // 即使已完成，也强制切过去，并且归零准备重打
-  await switchContext(nextPlayer)
-  await store.resetAll()
-}
-
-const switchContext = async (contestantName) => {
-  await store.setMatchContext(store.currentContext.groupName, contestantName)
-}
-
-// 仅归零当前设备 (不切人，用于误操作重打)
-const handleResetOnly = async () => {
-  if (confirm("Reset current scores to ZERO?")) {
-    await store.resetAll() // 这里确实需要归零当前选手，因为是用户明确要求的
+  if (store.projectConfig.mode === 'FREE') {
+      // 自由模式逻辑其实在 confirmSmartNext 已涵盖，这里防御性处理
+      await changePlayer(1)
+  } else {
+      // 赛事模式：从第一位开始
+      const firstPlayer = currentGroupPlayers.value[0]
+      if (firstPlayer) {
+          await switchContext(firstPlayer)
+          await store.resetAll() // 归零，准备重打
+      }
   }
 }
 
-// 手动切换 (左右箭头)
+const finishMatch = () => { showAllDoneDialog.value = false; emit('stop') }
+
+// --- 切换逻辑 (含自动存档) ---
+const changePlayer = async (delta) => {
+  const groupName = store.currentContext.groupName
+  const group = store.projectConfig.groups.find(g => g.name === groupName)
+  if (!group || !group.players) return
+
+  const nextIdx = (currentIdx.value === -1 ? 0 : currentIdx.value) + delta
+
+  if (nextIdx >= group.players.length) {
+    if (store.projectConfig.mode === 'FREE') {
+      // 自由模式：动态加人
+      const newPlayerName = `Player ${group.players.length + 1}`
+      group.players.push(newPlayerName)
+
+      // 【关键】立即保存组配置到磁盘，确保下次“Continue”能读到这个人
+      await store.updateGroups(store.projectConfig.groups)
+
+      await store.setMatchContext(groupName, newPlayerName)
+    }
+  } else {
+      const target = group.players[nextIdx >= 0 ? nextIdx : 0]
+      await store.setMatchContext(groupName, target)
+  }
+}
+
+const switchContext = async (name) => { await store.setMatchContext(store.currentContext.groupName, name) }
+const handleResetOnly = async () => { if (confirm("Reset current scores to ZERO?")) await store.resetAll() }
 const manualChange = async (delta) => {
-  const players = currentGroupPlayers.value
-  const len = players.length
-  if (len === 0) return
-
-  const nextIdx = (currentIdx.value + delta + len) % len
-  const nextPlayer = players[nextIdx]
-
-  // 【关键修改】手动切换时，也遵循 "先切人，后归零" 的原则
-  // 假设用户想保留当前选手的成绩，切换去给下一个人打分
-  await switchContext(nextPlayer)
-  await store.resetAll()
+    const players = currentGroupPlayers.value
+    if(players.length === 0) return
+    const nextIdx = (currentIdx.value + delta + players.length) % players.length
+    const nextPlayer = players[nextIdx]
+    await switchContext(nextPlayer)
+    await store.resetAll()
 }
-
-// 下拉直接选择
-const onSelectPlayer = async (e) => {
-  const name = e.target.value
-  // 【关键修改】同上
-  await switchContext(name)
-  await store.resetAll()
-}
-
-const handleKeydown = (e) => {
-  if (e.ctrlKey && e.code === 'KeyG') { e.preventDefault(); handleNextClick() }
-}
-
-// --- Overlay 相关 (保持不变) ---
-const openWindowSelector = async () => {
-  windowList.value = await store.fetchWindows()
-  showWindowSelector.value = true
-}
+const onSelectPlayer = async (e) => { await switchContext(e.target.value); await store.resetAll() }
+const handleKeydown = (e) => { if (e.ctrlKey && e.code === 'KeyG') { e.preventDefault(); handleNextClick() } }
+const openWindowSelector = async () => { windowList.value = await store.fetchWindows(); showWindowSelector.value = true }
 const confirmOverlay = async () => {
   if (!selectedTargetWindow.value) return
   let targetBounds = null
-  if (selectedTargetWindow.value !== "FULL_SCREEN") {
-    const res = await store.getWindowBounds(selectedTargetWindow.value)
-    if (res.found) targetBounds = res.bounds
-  }
+  if (selectedTargetWindow.value !== "FULL_SCREEN") { const res = await store.getWindowBounds(selectedTargetWindow.value); if (res.found) targetBounds = res.bounds }
   showWindowSelector.value = false
   if (window.electron && window.electron.ipcRenderer) {
-    const initialState = {
-      referees: JSON.parse(JSON.stringify(store.referees)),
-      context: JSON.parse(JSON.stringify(store.currentContext))
-    }
+    const initialState = { referees: JSON.parse(JSON.stringify(store.referees)), context: JSON.parse(JSON.stringify(store.currentContext)) }
     window.electron.ipcRenderer.send('open-overlay', { bounds: targetBounds, initialState: initialState })
   }
 }
 </script>
 
 <style scoped lang="scss">
-/* 保持原有样式，此处省略以节省篇幅，请直接复用上一次提供的 CSS */
+/* 保持原有样式 */
 .score-board { height: 100%; display: flex; flex-direction: column; background: transparent; }
 .header { height: 70px; background: #252526; border-bottom: 1px solid #333; display: flex; align-items: center; justify-content: space-between; padding: 0 15px; box-shadow: 0 2px 10px rgba(0,0,0,0.3); flex-shrink: 0; }
 .header-section { display: flex; align-items: center; gap: 10px; }
