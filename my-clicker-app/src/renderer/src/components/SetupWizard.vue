@@ -208,7 +208,6 @@ onMounted(() => {
     form.projectName = store.projectConfig.project_name
     form.mode = store.projectConfig.mode
 
-    // 恢复组别
     if (store.projectConfig.groups && store.projectConfig.groups.length > 0) {
       groups.value = store.projectConfig.groups.map(g => ({
         ...g,
@@ -218,7 +217,6 @@ onMounted(() => {
       selectedGroupToRun.value = groups.value[0]
     }
 
-    // 恢复裁判数量设置（Free Mode）
     if (form.mode === 'FREE' && groups.value[0]) {
       form.refereeCount = groups.value[0].refCount
     }
@@ -228,42 +226,36 @@ onMounted(() => {
 })
 
 const handleStep1Next = async () => {
-  // 1. 如果是新项目，发送请求创建
   if (!isResuming.value) {
     await store.createProject(form.projectName, form.mode)
   } else {
-    // 【关键修改】恢复模式下，手动更新 Store 中的模式和名称，
-    // 确保 ScoreBoard 能获取到用户在 UI 上最新选择的模式 (Free/Tournament)
     store.projectConfig.mode = form.mode
     store.projectConfig.project_name = form.projectName
   }
 
-  // 2. 组别初始化：如果是空项目（无论新建还是历史），都初始化默认组
   if (groups.value.length === 0) {
     if (form.mode === 'TOURNAMENT') {
       addNewGroup()
     } else {
+      // 【关键修改】自由模式初始化，只生成 Player 1
       const freeGroup = {
         name: 'Free Mode',
         refCount: form.refereeCount,
-        rawPlayers: 'Player 1\nPlayer 2\nPlayer 3',
-        players: ['Player 1', 'Player 2', 'Player 3'],
+        rawPlayers: 'Player 1',
+        players: ['Player 1'],
         referees: []
       }
       groups.value = [freeGroup]
     }
   } else {
-    // 如果是恢复且已有组，允许更新自由模式的裁判数
     if (isResuming.value && form.mode === 'FREE') {
       groups.value[0].refCount = form.refereeCount
     }
   }
 
-  // 3. 路由跳转
   if (form.mode === 'TOURNAMENT') {
     currentStep.value = 2
   } else {
-    // Free Mode
     await store.updateGroups(groups.value)
     selectedGroupToRun.value = groups.value[0]
     refreshBindingSlots()
@@ -382,10 +374,14 @@ const finishSetup = async () => {
 
   const timeout = setTimeout(() => { showForceEntry.value = true }, 8000)
 
-  connectTimer = setInterval(() => {
+  connectTimer = setInterval(async () => {
     if (checkAllConnected()) {
       clearTimeout(timeout)
       clearInterval(connectTimer)
+
+      console.log("All devices connected. Performing initial RESET...")
+      await store.resetAll()
+
       isConnecting.value = false
       emit('finished')
     } else if (checkAnyError()) {
@@ -424,8 +420,10 @@ const cancelConnect = () => {
   store.stopMatch()
 }
 
-const confirmForceEnter = () => {
+const confirmForceEnter = async () => {
   clearInterval(connectTimer)
+  console.log("Force entering. Attempting RESET on connected devices...")
+  await store.resetAll()
   isConnecting.value = false
   emit('finished')
 }

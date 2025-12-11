@@ -123,30 +123,37 @@ onMounted(async () => {
   store.fetchSettings()
   if (store.currentContext.groupName) {
     await store.fetchScoredPlayers(store.currentContext.groupName)
-    // 【关键】初始化状态检查
     initResumeState()
   }
   window.addEventListener('keydown', handleKeydown)
 })
 
-onUnmounted(() => { window.removeEventListener('keydown', handleKeydown) })
+onUnmounted(() => {
+  window.removeEventListener('keydown', handleKeydown)
+
+  // 组件卸载（退出页面）时，同步关闭悬浮窗
+  if (window.electron && window.electron.ipcRenderer) {
+    window.electron.ipcRenderer.send('close-overlay')
+  }
+})
 
 // --- 核心：初始化与恢复逻辑 ---
 const initResumeState = async () => {
-  // 如果所有选手都已打分（例如继续比赛时），需要根据模式决定行为
   if (isAllDone.value) {
     if (store.projectConfig.mode === 'FREE') {
-      // 自由模式：自动追加一位选手并开始
+      // 【核心修改】自由模式下，如果全部已打分（例如从历史记录进入），直接定位到最后并创建新选手
+      // 如果 currentIdx 为 -1 (丢失上下文)，手动设为最后一位，确保 changePlayer(1) 能正确计算出 length
+      if (currentIdx.value === -1 && currentGroupPlayers.value.length > 0) {
+        store.currentContext.contestantName = currentGroupPlayers.value[currentGroupPlayers.value.length - 1]
+      }
       await changePlayer(1)
     } else {
-      // 赛事模式：弹窗提示是否重头开始
       showAllDoneDialog.value = true
     }
   } else {
     // 寻找第一个未打分的选手
     const unscored = findNextUnscoredPlayer()
     if (unscored) {
-      // 切换过去，不重置设备（保留上下文即可，设备默认0）
       await switchContext(unscored)
     }
   }
@@ -165,11 +172,9 @@ const confirmSmartNext = async () => {
   const currentName = store.currentContext.contestantName
   store.markAsScored(currentName)
 
-  // 1. 查找下一位
   const nextPlayer = findNextUnscoredPlayer()
 
   if (nextPlayer) {
-    // 找到未打分：切换 -> 归零
     await switchContext(nextPlayer)
     await store.resetAll()
   } else {
@@ -179,7 +184,6 @@ const confirmSmartNext = async () => {
        await changePlayer(1)
        await store.resetAll()
     } else {
-       // 赛事模式：再次提示（实现“下一位的时候再次提示”）
        showAllDoneDialog.value = true
     }
   }
@@ -189,7 +193,6 @@ const findNextUnscoredPlayer = () => {
   const players = currentGroupPlayers.value
   const len = players.length
   if (len === 0) return null
-  // 仅向后查找
   for (let i = 1; i < len; i++) {
     const idx = (currentIdx.value + i) % len
     const pName = players[idx]
@@ -198,25 +201,21 @@ const findNextUnscoredPlayer = () => {
   return null
 }
 
-// --- 循环打分/继续 ---
 const continueLoopMatch = async () => {
   showAllDoneDialog.value = false
   if (store.projectConfig.mode === 'FREE') {
-      // 自由模式逻辑其实在 confirmSmartNext 已涵盖，这里防御性处理
       await changePlayer(1)
   } else {
-      // 赛事模式：从第一位开始
       const firstPlayer = currentGroupPlayers.value[0]
       if (firstPlayer) {
           await switchContext(firstPlayer)
-          await store.resetAll() // 归零，准备重打
+          await store.resetAll()
       }
   }
 }
 
 const finishMatch = () => { showAllDoneDialog.value = false; emit('stop') }
 
-// --- 切换逻辑 (含自动存档) ---
 const changePlayer = async (delta) => {
   const groupName = store.currentContext.groupName
   const group = store.projectConfig.groups.find(g => g.name === groupName)
@@ -226,13 +225,9 @@ const changePlayer = async (delta) => {
 
   if (nextIdx >= group.players.length) {
     if (store.projectConfig.mode === 'FREE') {
-      // 自由模式：动态加人
       const newPlayerName = `Player ${group.players.length + 1}`
       group.players.push(newPlayerName)
-
-      // 【关键】立即保存组配置到磁盘，确保下次“Continue”能读到这个人
       await store.updateGroups(store.projectConfig.groups)
-
       await store.setMatchContext(groupName, newPlayerName)
     }
   } else {
@@ -254,13 +249,20 @@ const manualChange = async (delta) => {
 const onSelectPlayer = async (e) => { await switchContext(e.target.value); await store.resetAll() }
 const handleKeydown = (e) => { if (e.ctrlKey && e.code === 'KeyG') { e.preventDefault(); handleNextClick() } }
 const openWindowSelector = async () => { windowList.value = await store.fetchWindows(); showWindowSelector.value = true }
+
+// 【核心修改】打开悬浮窗时传递完整 Project Config，确保 Next Player 功能正常
 const confirmOverlay = async () => {
   if (!selectedTargetWindow.value) return
   let targetBounds = null
   if (selectedTargetWindow.value !== "FULL_SCREEN") { const res = await store.getWindowBounds(selectedTargetWindow.value); if (res.found) targetBounds = res.bounds }
   showWindowSelector.value = false
   if (window.electron && window.electron.ipcRenderer) {
-    const initialState = { referees: JSON.parse(JSON.stringify(store.referees)), context: JSON.parse(JSON.stringify(store.currentContext)) }
+    const initialState = {
+      referees: JSON.parse(JSON.stringify(store.referees)),
+      context: JSON.parse(JSON.stringify(store.currentContext)),
+      // 新增：传递项目配置
+      projectConfig: JSON.parse(JSON.stringify(store.projectConfig))
+    }
     window.electron.ipcRenderer.send('open-overlay', { bounds: targetBounds, initialState: initialState })
   }
 }

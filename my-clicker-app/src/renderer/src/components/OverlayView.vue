@@ -1,19 +1,62 @@
 <template>
   <div class="overlay-container">
-    <div class="overlay-dock" @mouseenter="setIgnoreMouse(false)" @mouseleave="handleDockLeave">
-      <div class="dock-content">
-        <span class="dock-info">{{ store.currentContext.contestantName || 'Waiting...' }}</span>
-        <button class="btn-dock" @click="changePlayer(1)">Next ▶</button>
-        <button class="btn-dock btn-dock-reset" @click="store.resetAll()">R</button>
-        <button class="btn-dock btn-dock-exit" @click="closeOverlay">Exit ✖</button>
+    <div class="dock-trigger-zone" @mouseenter="onDockEnter" @mouseleave="onDockLeave">
+      <div class="overlay-dock" :class="{ visible: isDockVisible || showSettings }">
+        <div class="dock-content">
+          <span class="dock-info">{{ store.currentContext.contestantName || 'Waiting...' }}</span>
+          <button class="btn-dock" @click="changePlayer(1)" title="Next Player">Next ▶</button>
+          <button class="btn-dock btn-dock-reset" @click="store.resetAll()" title="Reset Score">R</button>
+          <button class="btn-dock" @click="toggleWaveform" :class="{ active: showWaveform }" title="Toggle Waveform">📈</button>
+          <button class="btn-dock" @click="toggleSettings" :class="{ active: showSettings }" title="Settings">⚙️</button>
+          <button class="btn-dock btn-dock-exit" @click="closeOverlay" title="Close Overlay">✖</button>
+        </div>
       </div>
+    </div>
+
+    <div v-if="showSettings" class="settings-panel" @mouseenter="setIgnoreMouse(false)" @mouseleave="handleCardLeave">
+      <h4>Overlay Settings</h4>
+      <div class="setting-row">
+        <label>Display Mode:</label>
+        <select v-model="config.displayMode">
+          <option value="SPLIT">Split (+ / -)</option>
+          <option value="TOTAL">Total Only</option>
+          <option value="COMBINED">Total & Split</option>
+          <option value="REALTIME">Real-time (Burst)</option>
+        </select>
+      </div>
+      <div class="setting-row">
+        <label>Opacity:</label>
+        <input type="range" v-model.number="config.opacity" min="0" max="1" step="0.05">
+        <span>{{ Math.round(config.opacity * 100) }}%</span>
+      </div>
+      <div class="setting-row">
+        <label>Bg Color:</label>
+        <input type="color" v-model="config.color">
+      </div>
+      <div class="setting-actions">
+        <button class="btn-reset-style" @click="resetStyle">Reset Default</button>
+        <button class="btn-close-settings" @click="showSettings = false">Close</button>
+      </div>
+    </div>
+
+    <div
+      v-if="showWaveform"
+      ref="waveformCardRef"
+      class="score-card waveform-card draggable-card"
+      :style="[getWaveformStyle(), cardStyle]"
+      @mousedown="startDrag($event, 'waveform')"
+      @mouseenter="setIgnoreMouse(false)"
+      @mouseleave="handleCardLeave"
+    >
+      <WaveformWidget />
+      <div class="resize-handle-visual"></div>
     </div>
 
     <div
       v-for="(ref, refKey) in store.referees"
       :key="refKey"
       class="score-card draggable-card"
-      :style="getCardStyle(refKey)"
+      :style="[getCardStyle(refKey), cardStyle]"
       @mousedown="startDrag($event, refKey)"
       @mouseenter="setIgnoreMouse(false)"
       @mouseleave="handleCardLeave"
@@ -22,59 +65,273 @@
          <span class="ref-label">{{ ref.name }}</span>
       </div>
 
-      <div class="score-split-row">
-        <span class="score-val plus">+{{ ref.plus }}</span>
-        <span class="score-divider">/</span>
-        <span class="score-val minus">-{{ ref.minus }}</span>
+      <div class="score-body">
+
+        <div v-if="config.displayMode === 'SPLIT'" class="score-grid-row">
+          <div class="grid-cell right-align">
+            <span class="score-val plus">+{{ ref.plus }}</span>
+          </div>
+          <div class="grid-cell center-align">
+            <span class="score-divider">/</span>
+          </div>
+          <div class="grid-cell left-align">
+            <span class="score-val minus">-{{ ref.minus }}</span>
+          </div>
+        </div>
+
+        <div v-else-if="config.displayMode === 'TOTAL'" class="score-single-row">
+          <span class="score-val total">{{ ref.total }}</span>
+        </div>
+
+        <div v-else-if="config.displayMode === 'COMBINED'" class="score-combined-col">
+          <div class="combined-total">{{ ref.total }}</div>
+          <div class="combined-detail">
+            <span class="mini-plus">+{{ ref.plus }}</span> / <span class="mini-minus">-{{ ref.minus }}</span>
+          </div>
+        </div>
+
+        <div v-else-if="config.displayMode === 'REALTIME'" class="score-grid-row realtime-layout">
+          <div class="grid-cell right-align fixed-slot">
+            <transition name="pop">
+              <span v-if="getRealTimeScore(refKey, 'plus') > 0" class="score-val plus rt-val">
+                +{{ getRealTimeScore(refKey, 'plus') }}
+              </span>
+            </transition>
+          </div>
+
+          <div class="grid-cell center-align fixed-divider">
+            <span class="score-divider">/</span>
+          </div>
+
+          <div class="grid-cell left-align fixed-slot">
+            <transition name="pop">
+              <span v-if="getRealTimeScore(refKey, 'minus') > 0" class="score-val minus rt-val">
+                -{{ getRealTimeScore(refKey, 'minus') }}
+              </span>
+            </transition>
+          </div>
+        </div>
+
       </div>
     </div>
   </div>
 </template>
 
 <script setup>
-import {ref, reactive, onMounted, onUnmounted, watch} from 'vue'
-import {useRefereeStore} from '../stores/refereeStore'
+import { ref, reactive, onMounted, onUnmounted, watch, nextTick, computed } from 'vue'
+import { useRefereeStore } from '../stores/refereeStore'
+import WaveformWidget from './WaveformWidget.vue'
 
 const store = useRefereeStore()
 const GRID_SIZE = 20
 const cardPositions = reactive({})
 let draggingRefKey = null
-let dragOffset = {x: 0, y: 0}
+let dragOffset = { x: 0, y: 0 }
 let isDragging = false
 
-// --- 初始化与同步 ---
+// UI 状态
+const showWaveform = ref(true)
+const showSettings = ref(false)
+const isDockVisible = ref(false)
+const waveformCardRef = ref(null)
+let resizeObserver = null
 
-// 1. 监听 IPC 传来的初始数据 (解决首次显示延迟问题)
+// --- 实时分逻辑状态 ---
+const previousScores = {}
+// 结构: { index: { plus: { val: 0, lastTime: 0, timer: null }, minus: ... } }
+const realTimeData = reactive({})
+
+// 连击判定阈值 (毫秒)：超过这个时间间隔按键，视为新的一组，不再累加
+const BURST_THRESHOLD = 400
+// 显示保留时长 (毫秒)
+const DISPLAY_DURATION = 1000
+
+// --- 外观配置 ---
+const defaultConfig = {
+  opacity: 0.85,
+  color: '#141414',
+  displayMode: 'SPLIT'
+}
+const config = reactive({ ...defaultConfig })
+
+const loadConfig = () => {
+  const saved = localStorage.getItem('overlay_config_v2')
+  if (saved) {
+    try {
+      const parsed = JSON.parse(saved)
+      Object.assign(config, parsed)
+    } catch(e) {}
+  }
+}
+watch(config, (newVal) => {
+  localStorage.setItem('overlay_config_v2', JSON.stringify(newVal))
+})
+const resetStyle = () => Object.assign(config, defaultConfig)
+
+const cardStyle = computed(() => {
+  const hex = config.color
+  const r = parseInt(hex.slice(1, 3), 16)
+  const g = parseInt(hex.slice(3, 5), 16)
+  const b = parseInt(hex.slice(5, 7), 16)
+  return {
+    backgroundColor: `rgba(${r}, ${g}, ${b}, ${config.opacity})`,
+    boxShadow: config.opacity < 0.1 ? 'none' : '2px 2px 10px rgba(0, 0, 0, 0.5)',
+    borderLeftColor: config.opacity < 0.1 ? 'transparent' : '#3498db'
+  }
+})
+
+// --- 核心：优化的连击判定逻辑 ---
+watch(() => store.referees, (newRefs) => {
+  Object.keys(newRefs).forEach(key => {
+    const ref = newRefs[key]
+
+    // 初始化
+    if (!previousScores[key]) {
+      previousScores[key] = { plus: ref.plus, minus: ref.minus }
+      return
+    }
+
+    const prev = previousScores[key]
+    const deltaPlus = ref.plus - prev.plus
+    const deltaMinus = ref.minus - prev.minus
+
+    // 更新历史基准
+    previousScores[key] = { plus: ref.plus, minus: ref.minus }
+
+    // 触发更新
+    if (deltaPlus > 0) processBurstScore(key, 'plus', deltaPlus)
+    if (deltaMinus > 0) processBurstScore(key, 'minus', deltaMinus)
+
+    // 归零重置
+    if (ref.plus === 0 && ref.minus === 0) {
+      clearRealTimeScore(key)
+    }
+  })
+}, { deep: true })
+
+const processBurstScore = (key, type, delta) => {
+  if (!realTimeData[key]) {
+    realTimeData[key] = {
+      plus: { val: 0, lastTime: 0, timer: null },
+      minus: { val: 0, lastTime: 0, timer: null }
+    }
+  }
+
+  const slot = realTimeData[key][type]
+  const now = Date.now()
+  const timeDiff = now - slot.lastTime
+
+  // 1. 连击判定
+  // 如果是第一次按，或者距离上次按键超过了阈值(800ms)，则重置为新起点
+  if (slot.val === 0 || timeDiff > BURST_THRESHOLD) {
+    slot.val = delta
+  } else {
+    // 否则认为是连击，累加
+    slot.val += delta
+  }
+
+  // 更新最后按键时间
+  slot.lastTime = now
+
+  // 2. 显示停留逻辑 (每次更新都重置消失倒计时)
+  if (slot.timer) clearTimeout(slot.timer)
+
+  // 设置消失定时器
+  slot.timer = setTimeout(() => {
+    slot.val = 0
+  }, DISPLAY_DURATION)
+}
+
+const clearRealTimeScore = (key) => {
+  if (realTimeData[key]) {
+    realTimeData[key].plus.val = 0
+    realTimeData[key].minus.val = 0
+  }
+}
+
+const getRealTimeScore = (key, type) => {
+  return realTimeData[key] ? realTimeData[key][type].val : 0
+}
+
+// --- 以下为原有交互逻辑，保持不变 ---
+const onDockEnter = () => { isDockVisible.value = true; setIgnoreMouse(false) }
+const onDockLeave = () => {
+  if (!showSettings.value) isDockVisible.value = false
+  if (!isDragging && !showSettings.value) setIgnoreMouse(true)
+}
+const toggleSettings = () => { showSettings.value = !showSettings.value }
+
 if (window.electron) {
   window.electron.ipcRenderer.on('init-overlay-data', (event, data) => {
-    console.log("Overlay received initial state:", data)
     if (data.referees) {
       store.referees = data.referees
-      initCardPositions() // 收到数据立即初始化位置
+      initCardPositions()
+      // 初始化历史分
+      Object.keys(data.referees).forEach(k => {
+        if (data.referees[k]) { // 增加判空
+           previousScores[k] = { plus: data.referees[k].plus, minus: data.referees[k].minus }
+        }
+      })
     }
     if (data.context) {
       store.currentContext = data.context
     }
-  })
-}
-
-// 2. 监听 Store 变化 (解决后续新增裁判或 WS 更新带来的变化)
-watch(() => store.referees, () => {
-  initCardPositions()
-}, {deep: true})
-
-const initCardPositions = () => {
-  Object.keys(store.referees).forEach((refKey, idx) => {
-    if (!cardPositions[refKey]) {
-      // 默认位置：垂直排列
-      cardPositions[refKey] = {x: 20, y: 80 + (idx * 120)}
+    // 【新增】接收并同步项目配置
+    if (data.projectConfig) {
+      store.projectConfig = data.projectConfig
     }
   })
 }
 
+watch(() => store.referees, () => { initCardPositions() }, { deep: true })
+watch(showWaveform, (val) => {
+  if (val) nextTick(() => setupResizeObserver())
+  else if (resizeObserver) resizeObserver.disconnect()
+})
+
+const initCardPositions = () => {
+  Object.keys(store.referees).forEach((refKey, idx) => {
+    if (!cardPositions[refKey]) cardPositions[refKey] = { x: 20, y: 80 + (idx * 120) }
+  })
+  if (!cardPositions['waveform']) {
+    const initW = 600
+    const initH = 220
+    const screenW = window.innerWidth
+    const screenH = window.innerHeight
+    cardPositions['waveform'] = { x: (screenW - initW) / 2, y: screenH - initH - 50, w: initW, h: initH }
+  }
+}
+
+const setupResizeObserver = () => {
+  if (waveformCardRef.value) {
+    const saved = cardPositions['waveform']
+    if (saved) {
+      waveformCardRef.value.style.width = `${saved.w}px`
+      waveformCardRef.value.style.height = `${saved.h}px`
+    }
+    resizeObserver = new ResizeObserver((entries) => {
+      for (let entry of entries) {
+        if (cardPositions['waveform']) {
+          const newW = entry.target.offsetWidth
+          const newH = entry.target.offsetHeight
+          const oldW = cardPositions['waveform'].w
+          const oldH = cardPositions['waveform'].h
+          if (Math.abs(newW - oldW) > 2 || Math.abs(newH - oldH) > 2) {
+             cardPositions['waveform'].w = newW
+             cardPositions['waveform'].h = newH
+          }
+        }
+      }
+    })
+    resizeObserver.observe(waveformCardRef.value)
+  }
+}
+
 onMounted(() => {
+  loadConfig()
   store.connectWebSocket()
-  initCardPositions() // 尝试初始化 (万一 Store 已经有默认值)
+  initCardPositions()
+  setupResizeObserver()
   window.addEventListener('mousemove', onDrag)
   window.addEventListener('mouseup', stopDrag)
 })
@@ -82,176 +339,121 @@ onMounted(() => {
 onUnmounted(() => {
   window.removeEventListener('mousemove', onDrag)
   window.removeEventListener('mouseup', stopDrag)
+  if (resizeObserver) resizeObserver.disconnect()
   if (window.electron) window.electron.ipcRenderer.removeAllListeners('init-overlay-data')
 })
 
-// --- 窗口交互 ---
-const closeOverlay = () => {
-  if (window.electron) window.electron.ipcRenderer.send('close-overlay')
-}
-const setIgnoreMouse = (ignore) => {
-  if (window.electron) window.electron.ipcRenderer.send('set-ignore-mouse', ignore)
-}
-const handleDockLeave = () => {
-  setIgnoreMouse(true)
-}
-const handleCardLeave = () => {
-  if (!isDragging) setIgnoreMouse(true)
+const closeOverlay = () => { if (window.electron) window.electron.ipcRenderer.send('close-overlay') }
+const setIgnoreMouse = (ignore) => { if (window.electron) window.electron.ipcRenderer.send('set-ignore-mouse', ignore) }
+const handleCardLeave = () => { if (!isDragging && !showSettings.value) setIgnoreMouse(true) }
+const toggleWaveform = () => { showWaveform.value = !showWaveform.value }
+
+const getWaveformStyle = () => {
+  const pos = cardPositions['waveform'] || { x: 0, y: 0 }
+  return { left: `${pos.x}px`, top: `${pos.y}px`, zIndex: draggingRefKey === 'waveform' ? 9999 : 1000, position: 'absolute' }
 }
 
-// --- 拖拽逻辑 ---
-const getCardStyle = (refKey) => {
-  const pos = cardPositions[refKey] || {x: 0, y: 0}
-  return {left: `${pos.x}px`, top: `${pos.y}px`, zIndex: draggingRefKey === refKey ? 9999 : 1000, position: 'absolute'}
+const getCardStyle = (key) => {
+  const pos = cardPositions[key] || { x: 0, y: 0 }
+  return { left: `${pos.x}px`, top: `${pos.y}px`, zIndex: draggingRefKey === key ? 9999 : 1000, position: 'absolute' }
 }
 
-const startDrag = (e, refKey) => {
+const startDrag = (e, key) => {
   if (e.button !== 0) return
+  const target = e.currentTarget.getBoundingClientRect()
+  const isRightEdge = e.clientX - target.left > target.width - 25
+  const isBottomEdge = e.clientY - target.top > target.height - 25
+  if (key === 'waveform' && isRightEdge && isBottomEdge) return
+
   isDragging = true
-  draggingRefKey = refKey
+  draggingRefKey = key
   setIgnoreMouse(false)
-  const pos = cardPositions[refKey] || {x: 0, y: 0}
-  dragOffset = {x: e.clientX - pos.x, y: e.clientY - pos.y}
+  const pos = cardPositions[key] || { x: 0, y: 0 }
+  dragOffset = { x: e.clientX - pos.x, y: e.clientY - pos.y }
 }
 
 const onDrag = (e) => {
   if (!draggingRefKey) return
   let rawX = e.clientX - dragOffset.x
   let rawY = e.clientY - dragOffset.y
-  cardPositions[draggingRefKey] = {
-    x: Math.round(rawX / GRID_SIZE) * GRID_SIZE,
-    y: Math.round(rawY / GRID_SIZE) * GRID_SIZE
-  }
+  const newPos = { x: Math.round(rawX / GRID_SIZE) * GRID_SIZE, y: Math.round(rawY / GRID_SIZE) * GRID_SIZE }
+  const oldPos = cardPositions[draggingRefKey]
+  if (oldPos && oldPos.w) { newPos.w = oldPos.w; newPos.h = oldPos.h }
+  cardPositions[draggingRefKey] = newPos
 }
 
-const stopDrag = () => {
-  isDragging = false;
-  draggingRefKey = null
-}
+const stopDrag = () => { isDragging = false; draggingRefKey = null }
 
 const changePlayer = async (delta) => {
-  // 简易切人逻辑，依赖 WS 同步回传 context_update
   const groupName = store.currentContext.groupName
   const group = store.projectConfig.groups.find(g => g.name === groupName)
   if (!group) return
   const currentIdx = group.players.indexOf(store.currentContext.contestantName)
   const nextIdx = currentIdx + delta
-  if (group.players[nextIdx]) {
-    await store.setMatchContext(groupName, group.players[nextIdx])
-  }
+  if (group.players[nextIdx]) await store.setMatchContext(groupName, group.players[nextIdx])
 }
 </script>
 
 <style scoped lang="scss">
-.overlay-container {
-  width: 100vw;
-  height: 100vh;
-  overflow: hidden;
-  background: transparent;
-}
+.overlay-container { width: 100vw; height: 100vh; overflow: hidden; background: transparent; }
 
-.overlay-dock {
-  position: absolute;
-  top: 0;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 10000;
-  padding-top: 5px;
-}
+/* Dock & Panel Styles */
+.dock-trigger-zone { position: absolute; top: 0; left: 0; width: 100%; height: 40px; z-index: 10000; display: flex; justify-content: center; }
+.overlay-dock { transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1); transform: translateY(-100%); padding-top: 5px; &.visible { transform: translateY(0); } }
+.dock-content { background: rgba(0, 0, 0, 0.85); padding: 6px 15px; border-radius: 0 0 10px 10px; display: flex; align-items: center; gap: 10px; color: white; box-shadow: 0 4px 12px rgba(0,0,0,0.3); }
+.dock-info { font-weight: bold; font-size: 0.9rem; margin-right: 5px; color: #ddd; }
+.btn-dock { background: #444; color: white; border: none; padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: 0.9rem; transition: 0.2s; &.active { background: #3498db; } &:hover { filter: brightness(1.2); } }
+.btn-dock-reset { background: #f39c12; }
+.btn-dock-exit { background: #e74c3c; }
 
-.dock-content {
-  background: rgba(0, 0, 0, 0.7);
-  padding: 4px 10px;
-  border-radius: 0 0 8px 8px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  color: white;
-}
+.settings-panel { position: absolute; top: 60px; left: 50%; transform: translateX(-50%); background: #252526; border: 1px solid #444; padding: 15px; border-radius: 8px; z-index: 10001; color: white; width: 280px; box-shadow: 0 5px 20px rgba(0,0,0,0.5); h4 { margin: 0 0 15px 0; text-align: center; color: #ccc; } .setting-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; label { font-size: 0.9rem; color: #aaa; } input[type=range] { width: 100px; } input[type=color] { border: none; width: 40px; height: 25px; padding: 0; background: none; } select { background: #333; color: white; border: 1px solid #555; padding: 2px 5px; border-radius: 4px; width: 140px; } span { width: 40px; text-align: right; font-size: 0.85rem; } } .setting-actions { display: flex; justify-content: space-between; margin-top: 15px; button { padding: 6px 12px; border: none; border-radius: 4px; cursor: pointer; font-size: 0.8rem; } .btn-reset-style { background: #555; color: white; } .btn-close-settings { background: #3498db; color: white; } } }
 
-.dock-info {
-  font-weight: bold;
-  font-size: 0.9rem;
-  margin-right: 5px;
-}
-
-.btn-dock {
-  background: #555;
-  color: white;
-  border: none;
-  padding: 2px 8px;
-  border-radius: 4px;
-  cursor: pointer;
-  font-size: 0.8rem;
-}
-
-.btn-dock:hover {
-  filter: brightness(1.2);
-}
-
-.btn-dock-reset {
-  background: #f39c12;
-}
-
-.btn-dock-exit {
-  background: #e74c3c;
-}
-
-/* 裁判卡片样式优化 */
+/* 卡片样式 */
 .score-card {
-  background: rgba(20, 20, 20, 0.85);
-  color: white;
-  border-left: 4px solid #3498db;
-  padding: 10px;
-  width: 160px; /*稍微加宽以容纳两个数字*/
-  box-shadow: 2px 2px 10px rgba(0, 0, 0, 0.5);
-  cursor: grab;
-  user-select: none;
-  display: flex;
-  flex-direction: column;
+  color: white; border-left: 4px solid #3498db; padding: 10px; cursor: grab; user-select: none; display: flex; flex-direction: column; transition: background-color 0.2s, box-shadow 0.2s;
+  &:active { cursor: grabbing; border-color: #2ecc71; }
+}
+.score-card:not(.waveform-card) { width: 180px; /* 稍微加宽以适应 Grid */ }
+.waveform-card { resize: both; overflow: hidden; min-width: 200px; min-height: 100px; padding: 0; padding-left: 5px; transform: translateZ(0); backface-visibility: hidden; }
+.resize-handle-visual { position: absolute; bottom: 2px; right: 2px; width: 12px; height: 12px; border-right: 3px solid #666; border-bottom: 3px solid #666; pointer-events: none; opacity: 0.6; }
+
+.overlay-header { font-size: 0.85rem; color: #aaa; border-bottom: 1px solid #444; margin-bottom: 5px; padding-bottom: 2px; }
+.score-body { display: flex; align-items: center; justify-content: center; min-height: 40px; width: 100%; }
+
+/* --- 核心修复：使用 Grid 布局解决摇晃问题 --- */
+.score-grid-row {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr; /* 左-中-右 三列 */
+  align-items: center;
+  width: 100%;
 }
 
-.score-card:active {
-  cursor: grabbing;
-  border-color: #2ecc71;
+.grid-cell {
+  white-space: nowrap;
 }
 
-.overlay-header {
-  font-size: 0.85rem;
-  color: #aaa;
-  border-bottom: 1px solid #444;
-  margin-bottom: 5px;
-  padding-bottom: 2px;
-}
+.left-align { text-align: left; }
+.center-align { text-align: center; }
+.right-align { text-align: right; }
 
-/* 新的分数布局样式 */
-.score-split-row {
+.fixed-slot {
+  /* 实时模式下的固定高度，防止数字出现/消失时高度跳动 */
+  min-height: 32px;
   display: flex;
   align-items: center;
-  justify-content: center;
-  font-family: monospace; /* 等宽字体对齐更好看 */
 }
+.fixed-slot.right-align { justify-content: flex-end; }
+.fixed-slot.left-align { justify-content: flex-start; }
 
-.score-val {
-  font-size: 2rem;
-  font-weight: bold;
-  line-height: 1;
-}
+.score-val { font-size: 2rem; font-weight: bold; line-height: 1; &.plus { color: #fff; } &.minus { color: #ff6b6b; } &.total { font-size: 2.5rem; color: #2ecc71; } }
+.score-divider { font-size: 1.5rem; color: #666; margin: 0 5px; font-weight: lighter; }
 
-.score-val.plus {
-  color: #fff;
-}
+/* 组合模式 */
+.score-combined-col { display: flex; flex-direction: column; align-items: center; }
+.combined-total { font-size: 2rem; font-weight: bold; color: #2ecc71; line-height: 1; margin-bottom: 2px; }
+.combined-detail { font-size: 0.9rem; color: #bbb; .mini-plus { color: #ddd; } .mini-minus { color: #ff6b6b; } }
 
-.score-val.minus {
-  color: #ff6b6b;
-}
-
-/* 负分标红 */
-
-.score-divider {
-  font-size: 1.5rem;
-  color: #666;
-  margin: 0 8px;
-  font-weight: lighter;
-}
+/* Realtime Pop 动画: 只有简单的缩放淡入，没有位移，防止布局抖动 */
+.pop-enter-active, .pop-leave-active { transition: all 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275); }
+.pop-enter-from, .pop-leave-to { opacity: 0; transform: scale(0.5); }
 </style>

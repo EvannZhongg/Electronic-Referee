@@ -15,13 +15,11 @@ const createPyProc = () => {
   let args = []
 
   if (is.dev) {
-    // 开发环境：假设 server.py 在项目根目录
     script = join(__dirname, '../../server.py')
     cmd = 'python'
     args = [script]
     console.log('Starting Python backend (Dev):', script)
   } else {
-    // 生产环境：运行打包后的 exe
     script = join(process.resourcesPath, 'backend-engine.exe')
     cmd = script
     args = []
@@ -76,6 +74,14 @@ function createWindow() {
     return { action: 'deny' }
   })
 
+  // 【新增】监听主窗口关闭事件，同步关闭悬浮窗
+  mainWindow.on('close', () => {
+    if (overlayWindow && !overlayWindow.isDestroyed()) {
+      overlayWindow.close()
+      overlayWindow = null
+    }
+  })
+
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
     mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL'])
   } else {
@@ -91,16 +97,13 @@ app.whenReady().then(() => {
     optimizer.watchWindowShortcuts(window)
   })
 
-  // 启动后台服务
   createPyProc()
-  // 创建主界面
   createWindow()
 
   // === IPC 事件监听 ===
 
-  // 1. 打开悬浮窗 (支持参数：bounds, initialState)
+  // 1. 打开悬浮窗
   ipcMain.on('open-overlay', (event, { bounds, initialState } = {}) => {
-    // 如果悬浮窗已存在，则聚焦，不重复创建
     if (overlayWindow) {
       overlayWindow.focus()
       return
@@ -112,7 +115,6 @@ app.whenReady().then(() => {
     let winW = primaryDisplay.workAreaSize.width
     let winH = primaryDisplay.workAreaSize.height
 
-    // 如果传递了 bounds，则应用 (实现“窗口匹配”功能)
     if (bounds) {
       winX = Math.round(bounds.x)
       winY = Math.round(bounds.y)
@@ -125,42 +127,36 @@ app.whenReady().then(() => {
       height: winH,
       x: winX,
       y: winY,
-      transparent: true,   // 透明背景
-      frame: false,        // 无边框
+      transparent: true,
+      frame: false,
       hasShadow: false,
-      fullscreen: false,   // 不强制独占全屏，方便覆盖在其他应用之上
-      alwaysOnTop: true,   // 始终置顶
-      skipTaskbar: true,   // 不显示在任务栏
-      resizable: true,     // 允许调整大小
+      fullscreen: false,
+      alwaysOnTop: true,
+      skipTaskbar: true,
+      resizable: true,
       webPreferences: {
-        preload: join(__dirname, '../preload/index.js'), // 复用 preload
+        preload: join(__dirname, '../preload/index.js'),
         sandbox: false,
         webSecurity: false
       }
     })
 
-    // 加载页面，带上 mode=overlay 参数
     if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
       overlayWindow.loadURL(`${process.env['ELECTRON_RENDERER_URL']}?mode=overlay`)
     } else {
       overlayWindow.loadFile(join(__dirname, '../renderer/index.html'), { search: 'mode=overlay' })
     }
 
-    // 默认开启鼠标穿透 (点击背景透传)，配合 OverlayView 中的 set-ignore-mouse 使用
     overlayWindow.setIgnoreMouseEvents(true, { forward: true })
 
-    // 【关键修复】窗口加载完成后，立即发送初始状态数据
     overlayWindow.webContents.on('did-finish-load', () => {
       if (initialState) {
-        // 通过 IPC 发送给 OverlayView.vue
         overlayWindow.webContents.send('init-overlay-data', initialState)
       }
     })
 
-    // 处理关闭事件
     overlayWindow.on('closed', () => {
       overlayWindow = null
-      // 通知主窗口悬浮窗已关闭 (可选，用于UI状态更新)
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send('overlay-closed')
       }
@@ -174,23 +170,20 @@ app.whenReady().then(() => {
     }
   })
 
-  // 3. 鼠标穿透控制 (通用，适用于发送事件的窗口)
+  // 3. 鼠标穿透控制
   ipcMain.on('set-ignore-mouse', (event, ignore) => {
     const win = BrowserWindow.fromWebContents(event.sender)
     if (win) {
       if (ignore) {
-        // ignore = true: 鼠标穿透，forward = true 表示把事件转发给系统
         win.setIgnoreMouseEvents(true, { forward: true })
       } else {
-        // ignore = false: 鼠标不穿透 (可以点击按钮/卡片)
         win.setIgnoreMouseEvents(false)
-        // 重新聚焦时确保置顶层级最高
         win.setAlwaysOnTop(true, 'screen-saver')
       }
     }
   })
 
-  // 4. 窗口控制 (最小化/关闭)
+  // 4. 窗口控制
   ipcMain.on('window-min', (event) => {
     const win = BrowserWindow.fromWebContents(event.sender)
     if (win) win.minimize()
