@@ -1,4 +1,4 @@
-import { defineStore } from 'pinia'
+import {defineStore} from 'pinia'
 import axios from 'axios'
 
 const API_BASE = 'http://127.0.0.1:8000'
@@ -11,9 +11,9 @@ export const useRefereeStore = defineStore('referee', {
     ws: null,
 
     // 项目配置
-    projectConfig: { name: '', mode: 'FREE', groups: [] },
+    projectConfig: {name: '', mode: 'FREE', groups: []},
     // 当前比赛上下文
-    currentContext: { groupName: '', contestantName: '' },
+    currentContext: {groupName: '', contestantName: ''},
 
     // 全局用户配置
     appSettings: {
@@ -58,10 +58,10 @@ export const useRefereeStore = defineStore('referee', {
     },
 
     updateScore(payload) {
-      const { index, score, status } = payload
+      const {index, score, status} = payload
       // 确保对象存在
       if (!this.referees[index]) {
-        this.referees[index] = { name: `Referee ${index}` }
+        this.referees[index] = {name: `Referee ${index}`}
       }
       this.referees[index] = {
         ...this.referees[index],
@@ -77,7 +77,7 @@ export const useRefereeStore = defineStore('referee', {
       try {
         const res = await axios.get(`${API_BASE}/api/settings`)
         // 合并到本地状态
-        this.appSettings = { ...this.appSettings, ...res.data }
+        this.appSettings = {...this.appSettings, ...res.data}
       } catch (e) {
         console.error("Failed to fetch settings:", e)
       }
@@ -100,8 +100,8 @@ export const useRefereeStore = defineStore('referee', {
 
     // 【新增】清理本地配置 (用于 New Match)
     clearLocalConfig() {
-      this.projectConfig = { name: '', mode: 'FREE', groups: [] }
-      this.currentContext = { groupName: '', contestantName: '' }
+      this.projectConfig = {name: '', mode: 'FREE', groups: []}
+      this.currentContext = {groupName: '', contestantName: ''}
       this.scoredPlayers = new Set()
       this.referees = {}
       // 注意：不重置 appSettings 和 ws 连接
@@ -110,7 +110,7 @@ export const useRefereeStore = defineStore('referee', {
     // 创建项目
     async createProject(name, mode) {
       try {
-        const res = await axios.post(`${API_BASE}/api/project/create`, { name, mode })
+        const res = await axios.post(`${API_BASE}/api/project/create`, {name, mode})
         // 后端返回初始配置
         this.projectConfig = res.data.config
         return res.data
@@ -123,7 +123,7 @@ export const useRefereeStore = defineStore('referee', {
     // 更新组别信息 (赛事模式编辑完组别后调用)
     async updateGroups(groups) {
       try {
-        await axios.post(`${API_BASE}/api/project/update_groups`, { groups })
+        await axios.post(`${API_BASE}/api/project/update_groups`, {groups})
         this.projectConfig.groups = groups
       } catch (e) {
         console.error("Update Groups Failed:", e)
@@ -169,7 +169,7 @@ export const useRefereeStore = defineStore('referee', {
           this.referees[r.index] = {
             name: r.name || `Referee ${r.index}`,
             total: 0, plus: 0, minus: 0,
-            status: { pri: 'connecting', sec: r.mode === 'DUAL' ? 'connecting' : 'n/a' }
+            status: {pri: 'connecting', sec: r.mode === 'DUAL' ? 'connecting' : 'n/a'}
           }
         })
       } catch (e) {
@@ -201,7 +201,7 @@ export const useRefereeStore = defineStore('referee', {
         console.error("Stop match failed:", e)
       } finally {
         this.referees = {}
-        this.currentContext = { groupName: '', contestantName: '' }
+        this.currentContext = {groupName: '', contestantName: ''}
       }
     },
 
@@ -221,10 +221,10 @@ export const useRefereeStore = defineStore('referee', {
     // 获取特定窗口坐标
     async getWindowBounds(title) {
       try {
-        const res = await axios.post(`${API_BASE}/api/window/bounds`, { title })
+        const res = await axios.post(`${API_BASE}/api/window/bounds`, {title})
         return res.data
       } catch (e) {
-        return { found: false }
+        return {found: false}
       }
     },
 
@@ -242,7 +242,7 @@ export const useRefereeStore = defineStore('referee', {
 
     async loadProject(dirName) {
       try {
-        const res = await axios.post(`${API_BASE}/api/project/load`, { dir_name: dirName })
+        const res = await axios.post(`${API_BASE}/api/project/load`, {dir_name: dirName})
         if (res.data.status === 'ok') {
           this.projectConfig = res.data.config
           return true
@@ -257,7 +257,7 @@ export const useRefereeStore = defineStore('referee', {
     async fetchReportData(dirName) {
       try {
         // 返回 { config: ..., scores: ... }
-        const res = await axios.post(`${API_BASE}/api/project/report`, { dir_name: dirName })
+        const res = await axios.post(`${API_BASE}/api/project/report`, {dir_name: dirName})
         return res.data
       } catch (e) {
         console.error("Fetch report failed", e)
@@ -270,7 +270,7 @@ export const useRefereeStore = defineStore('referee', {
     async fetchScoredPlayers(groupName) {
       if (!groupName) return
       try {
-        const res = await axios.post(`${API_BASE}/api/group/status`, { group: groupName })
+        const res = await axios.post(`${API_BASE}/api/group/status`, {group: groupName})
         if (res.data.scored) {
           this.scoredPlayers = new Set(res.data.scored)
         }
@@ -290,6 +290,50 @@ export const useRefereeStore = defineStore('referee', {
     clearScoredStatus(contestantName) {
       if (contestantName) {
         this.scoredPlayers.delete(contestantName)
+      }
+    },
+    // --- 新增：删除项目 ---
+    async deleteProject(dirName) {
+      try {
+        const res = await axios.post(`${API_BASE}/api/project/delete`, {dir_name: dirName})
+        return res.data.status === 'ok'
+      } catch (e) {
+        console.error("Delete project failed", e)
+        return false
+      }
+    },
+    async exportScoreDetails(groupName, players, options) {
+      try {
+        const response = await axios.post(`${API_BASE}/api/export/details`, {
+          group: groupName,
+          players: players,
+          options: options
+        }, {
+          responseType: 'blob' // 关键：接收二进制流
+        })
+
+        // 触发浏览器下载
+        const url = window.URL.createObjectURL(new Blob([response.data]))
+        const link = document.createElement('a')
+        link.href = url
+
+        // 尝试从 header 获取文件名，或者自己生成
+        const contentDisposition = response.headers['content-disposition']
+        let fileName = `Export_${groupName}.zip`
+        if (contentDisposition) {
+          const match = contentDisposition.match(/filename="?([^"]+)"?/)
+          if (match && match[1]) fileName = match[1]
+        }
+
+        link.setAttribute('download', fileName)
+        document.body.appendChild(link)
+        link.click()
+        link.remove()
+
+        return true
+      } catch (e) {
+        console.error("Export failed", e)
+        return false
       }
     }
   }

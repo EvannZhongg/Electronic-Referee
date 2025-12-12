@@ -9,13 +9,14 @@
     <div class="main-content">
       <HomeView
         v-if="currentView === 'home'"
+        :initialMode="homeInitialMode"
         @navigate="handleNavigate"
         @view-report="handleViewReport"
       />
 
       <SetupWizard
         v-else-if="currentView === 'setup'"
-        @cancel="currentView = 'home'"
+        @cancel="returnToHome('default')"
         @finished="currentView = 'scoreboard'"
       />
 
@@ -27,7 +28,7 @@
       <ReportView
         v-else-if="currentView === 'report'"
         :projectDir="targetProjectDir"
-        @back="currentView = 'home'"
+        @back="returnToHome('history')"
       />
     </div>
   </div>
@@ -40,11 +41,12 @@ import HomeView from './components/HomeView.vue'
 import SetupWizard from './components/SetupWizard.vue'
 import ScoreBoard from './components/ScoreBoard.vue'
 import OverlayView from './components/OverlayView.vue'
-import ReportView from './components/ReportView.vue' // 引入新组件
+import ReportView from './components/ReportView.vue'
 import { useRefereeStore } from './stores/refereeStore'
 
 const currentView = ref('home')
 const targetProjectDir = ref(null) // 用于传递给 ReportView
+const homeInitialMode = ref('default') // 新增：控制 HomeView 初始显示状态 (default | history)
 const store = useRefereeStore()
 
 const isOverlayWindow = computed(() => {
@@ -67,6 +69,13 @@ const handleViewReport = (dirName) => {
 
 const handleStopMatch = async () => {
   await store.stopMatch()
+  // 停止比赛后返回默认首页
+  returnToHome('default')
+}
+
+// 统一的返回首页逻辑
+const returnToHome = (mode = 'default') => {
+  homeInitialMode.value = mode
   currentView.value = 'home'
 }
 </script>

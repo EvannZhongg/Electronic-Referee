@@ -13,51 +13,42 @@
           {{ group.name }}
         </div>
       </div>
-      <button class="btn-back" @click="$emit('back')">← Back Home</button>
+      <button class="btn-back" @click="$emit('back')">← Back to List</button>
     </div>
 
     <div class="main-content" v-if="currentGroup">
       <div class="top-bar">
-        <h2>{{ currentGroup.name }} - Report</h2>
-        <div class="view-switcher">
-          <button :class="{ active: viewMode === 'RAW' }" @click="viewMode = 'RAW'">Raw Scores</button>
-          <button :class="{ active: viewMode === 'SCALED' }" @click="viewMode = 'SCALED'">Scaled Scores</button>
+        <div class="bar-left">
+          <h2>{{ currentGroup.name }}</h2>
+          <div v-if="viewMode === 'SCALED'" class="settings-inline">
+            <label>Ratio (%):</label>
+            <input type="number" v-model.number="scaleRatio" min="1" max="100">
+          </div>
         </div>
-      </div>
 
-      <div v-if="viewMode === 'RAW'" class="table-container">
-        <table>
-          <thead>
-            <tr>
-              <th>Contestant</th>
-              <th v-for="i in currentGroup.refCount" :key="i">Referee {{ i }} (Total)</th>
-              <th>Sum</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="player in currentGroup.players" :key="player">
-              <td class="fixed-col">{{ player }}</td>
-              <td v-for="i in currentGroup.refCount" :key="i">
-                {{ getRawScore(player, i) }}
-              </td>
-              <td class="highlight">{{ getRawSum(player) }}</td>
-            </tr>
-          </tbody>
-        </table>
+        <div class="bar-right">
+          <button class="btn-export-details" @click="openExportModal">
+            Export Details
+          </button>
+
+          <button class="btn-export-csv" @click="exportCSV" title="Export Table CSV">
+            Table CSV
+          </button>
+
+          <div class="view-switcher">
+            <button :class="{ active: viewMode === 'SCALED' }" @click="viewMode = 'SCALED'">Scaled</button>
+            <button :class="{ active: viewMode === 'RAW' }" @click="viewMode = 'RAW'">Raw</button>
+          </div>
+        </div>
       </div>
 
       <div v-if="viewMode === 'SCALED'" class="table-container">
-        <div class="settings-bar">
-          <label>Scaling Ratio (%): </label>
-          <input type="number" v-model.number="scaleRatio" min="1" max="100">
-        </div>
-
-        <table>
+        <table class="striped-table">
           <thead>
             <tr>
-              <th>Rank</th>
+              <th width="60">Rank</th>
               <th>Contestant</th>
-              <th v-for="i in currentGroup.refCount" :key="i">Ref {{ i }} (Scaled)</th>
+              <th v-for="i in currentGroup.refCount" :key="i">Ref {{ i }}</th>
               <th>Final Score</th>
             </tr>
           </thead>
@@ -73,6 +64,86 @@
           </tbody>
         </table>
       </div>
+
+      <div v-if="viewMode === 'RAW'" class="table-container">
+        <table class="striped-table">
+          <thead>
+            <tr>
+              <th>Contestant</th>
+              <th v-for="i in currentGroup.refCount" :key="i">Referee {{ i }}</th>
+              <th>Average Score</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="player in currentGroup.players" :key="player">
+              <td class="fixed-col">{{ player }}</td>
+              <td v-for="i in currentGroup.refCount" :key="i">
+                <div class="score-cell">
+                  <div class="main-score">{{ getRawDetail(player, i).total }}</div>
+                  <div class="sub-score">
+                    <span class="plus">+{{ getRawDetail(player, i).plus }}</span> /
+                    <span class="minus">{{ getRawDetail(player, i).minus }}</span>
+                  </div>
+                </div>
+              </td>
+              <td class="highlight">{{ getRawAverage(player).toFixed(2) }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div v-if="showExportModal" class="modal-overlay" @click.self="showExportModal = false">
+      <div class="modal-content export-modal">
+        <h3>Export Score Details</h3>
+
+        <div class="modal-body-layout">
+          <div class="section-players">
+            <div class="section-header">
+              <span>Select Players ({{ selectedPlayers.length }})</span>
+              <label class="select-all-label">
+                <input type="checkbox" :checked="isAllSelected" @change="toggleSelectAll"> All
+              </label>
+            </div>
+            <div class="player-scroll-list">
+              <label v-for="p in currentGroup?.players" :key="p" class="player-item-row">
+                <input type="checkbox" v-model="selectedPlayers" :value="p">
+                <span class="p-name">{{ p }}</span>
+              </label>
+            </div>
+          </div>
+
+          <div class="section-options">
+            <h4>Format Options</h4>
+            <div class="options-grid">
+              <label class="opt-row">
+                <input type="checkbox" v-model="exportOpts.txt">
+                <span>TXT (Log)</span>
+              </label>
+              <label class="opt-row">
+                <input type="checkbox" v-model="exportOpts.srt">
+                <span>SRT (Subtitle)</span>
+              </label>
+
+              <div class="sub-opts" v-if="exportOpts.srt">
+                <label>SRT Mode:</label>
+                <select v-model="exportOpts.srt_mode">
+                  <option value="TOTAL">Total Score</option>
+                  <option value="SPLIT">Plus / Minus</option>
+                  <option value="REALTIME">Real-time Burst</option>
+                </select>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="modal-actions">
+          <button class="btn-cancel" @click="showExportModal = false">Cancel</button>
+          <button class="btn-confirm" @click="confirmBatchExport" :disabled="selectedPlayers.length === 0">
+            Download ZIP
+          </button>
+        </div>
+      </div>
     </div>
   </div>
 </template>
@@ -87,11 +158,19 @@ const store = useRefereeStore()
 
 const groups = ref([])
 const currentGroup = ref(null)
-const scoresData = ref({}) // { GroupName: { PlayerName: { RefIndex: { total... } } } }
-const viewMode = ref('RAW')
+const scoresData = ref({})
+const viewMode = ref('SCALED')
 const scaleRatio = ref(60)
 
-// 加载数据
+// 导出相关状态
+const selectedPlayers = ref([])
+const showExportModal = ref(false)
+const exportOpts = ref({
+  txt: true,
+  srt: true,
+  srt_mode: 'REALTIME'
+})
+
 onMounted(async () => {
   if (props.projectDir) {
     const data = await store.fetchReportData(props.projectDir)
@@ -104,39 +183,35 @@ onMounted(async () => {
 })
 
 // --- Helper Functions ---
-
 const getRawScoreObj = (player, refIdx) => {
   if (!currentGroup.value) return null
   const gName = currentGroup.value.name
   return scoresData.value[gName]?.[player]?.[refIdx]
 }
 
-const getRawScore = (player, refIdx) => {
+const getRawDetail = (player, refIdx) => {
   const obj = getRawScoreObj(player, refIdx)
-  return obj ? obj.total : '-'
+  if (!obj) return { total: '-', plus: '-', minus: '-' }
+  return { total: obj.total, plus: obj.plus, minus: obj.minus }
 }
 
-const getRawSum = (player) => {
+const getRawAverage = (player) => {
   if (!currentGroup.value) return 0
   let sum = 0
   for (let i = 1; i <= currentGroup.value.refCount; i++) {
     const obj = getRawScoreObj(player, i)
     if (obj) sum += obj.total
   }
-  return sum
+  return sum / currentGroup.value.refCount
 }
 
-// --- 比例分计算核心逻辑 ---
-
+// --- 计算逻辑 ---
 const sortedScaledRows = computed(() => {
   if (!currentGroup.value) return []
-
   const players = currentGroup.value.players
   const refCount = currentGroup.value.refCount
   const gName = currentGroup.value.name
-
-  // 1. 找出每个裁判列的最高分 (MaxScore per Referee)
-  const maxScores = {} // { 1: 20, 2: 30 ... }
+  const maxScores = {}
 
   for (let i = 1; i <= refCount; i++) {
     let max = 0
@@ -147,46 +222,121 @@ const sortedScaledRows = computed(() => {
     maxScores[i] = max
   }
 
-  // 2. 计算每个选手的比例分和最终均分
   const rows = players.map(p => {
     const scaledScores = {}
     let sumScaled = 0
     let validRefs = 0
-
     for (let i = 1; i <= refCount; i++) {
       const raw = scoresData.value[gName]?.[p]?.[i]?.total || 0
       const max = maxScores[i]
-
-      // 算法: (Raw / Max) * Ratio
-      // 如果 Max 为 0 (该裁判没打分)，则比例分为 0
       let scaled = 0
-      if (max > 0) {
-        scaled = (raw / max) * scaleRatio.value
-      }
-
+      if (max > 0) scaled = (raw / max) * scaleRatio.value
       scaledScores[i] = scaled
       sumScaled += scaled
-      validRefs++ // 即使是0分也算参与了
+      validRefs++
     }
-
     const finalScore = validRefs > 0 ? (sumScaled / validRefs) : 0
-
-    return {
-      player: p,
-      scaledScores,
-      finalScore
-    }
+    return { player: p, scaledScores, finalScore }
   })
-
-  // 3. 排序 (分数高到低)
   return rows.sort((a, b) => b.finalScore - a.finalScore)
 })
+
+// --- 导出逻辑 ---
+
+const openExportModal = () => {
+  // 默认全选所有选手
+  if (currentGroup.value) {
+    selectedPlayers.value = [...currentGroup.value.players]
+  }
+  showExportModal.value = true
+}
+
+const isAllSelected = computed(() => {
+  if (!currentGroup.value) return false
+  return selectedPlayers.value.length === currentGroup.value.players.length && currentGroup.value.players.length > 0
+})
+
+const toggleSelectAll = (e) => {
+  if (e.target.checked) {
+    selectedPlayers.value = [...currentGroup.value.players]
+  } else {
+    selectedPlayers.value = []
+  }
+}
+
+const confirmBatchExport = async () => {
+  if (selectedPlayers.value.length === 0) return
+
+  const success = await store.exportScoreDetails(
+    currentGroup.value.name,
+    selectedPlayers.value,
+    exportOpts.value
+  )
+
+  if (success) {
+    showExportModal.value = false
+  } else {
+    alert("Export failed!")
+  }
+}
+
+// --- CSV 导出 ---
+const exportCSV = () => {
+  if (!currentGroup.value) return
+
+  let csvContent = "data:text/csv;charset=utf-8,\uFEFF"
+  const refCount = currentGroup.value.refCount
+
+  if (viewMode.value === 'SCALED') {
+    let header = ['Rank', 'Contestant']
+    for(let i=1; i<=refCount; i++) header.push(`Ref ${i} (Scaled)`)
+    header.push('Final Score')
+    csvContent += header.join(',') + "\n"
+
+    sortedScaledRows.value.forEach((row, idx) => {
+      let line = [idx + 1, row.player]
+      for(let i=1; i<=refCount; i++) line.push(row.scaledScores[i].toFixed(2))
+      line.push(row.finalScore.toFixed(2))
+      csvContent += line.join(',') + "\n"
+    })
+
+  } else {
+    let header = ['Contestant']
+    for(let i=1; i<=refCount; i++) {
+      header.push(`Ref ${i}`)
+    }
+    header.push('Average Score')
+    csvContent += header.join(',') + "\n"
+
+    currentGroup.value.players.forEach(player => {
+      let line = [player]
+      for(let i=1; i<=refCount; i++) {
+        const d = getRawDetail(player, i)
+        // 简化 CSV 输出，使用类似 10 (+15/-5) 的格式？或者只输出总分
+        // 这里根据需求，为了处理方便，我们输出 Total。如果需要详情，建议用Details导出
+        const t = d.total === '-' ? 0 : d.total
+        line.push(t)
+      }
+      line.push(getRawAverage(player).toFixed(2))
+      csvContent += line.join(',') + "\n"
+    })
+  }
+
+  const encodedUri = encodeURI(csvContent)
+  const link = document.createElement("a")
+  link.setAttribute("href", encodedUri)
+  const safeName = currentGroup.value.name.replace(/[^a-z0-9]/gi, '_').toLowerCase()
+  link.setAttribute("download", `${safeName}_${viewMode.value.toLowerCase()}.csv`)
+  document.body.appendChild(link)
+  link.click()
+  document.body.removeChild(link)
+}
 
 </script>
 
 <style scoped lang="scss">
+/* 保持原有布局 */
 .report-view { display: flex; height: 100%; color: white; background: #1e1e1e; }
-
 .sidebar {
   width: 250px; background: #252526; border-right: 1px solid #333; display: flex; flex-direction: column;
   .sidebar-header { padding: 20px; font-weight: bold; font-size: 1.2rem; border-bottom: 1px solid #333; }
@@ -194,28 +344,92 @@ const sortedScaledRows = computed(() => {
   .group-item { padding: 15px 20px; cursor: pointer; border-bottom: 1px solid #2d2d2d; &:hover { background: #2d2d2d; } &.active { background: #3498db; color: white; } }
   .btn-back { margin: 20px; padding: 10px; background: #444; border: none; color: #ccc; cursor: pointer; border-radius: 4px; &:hover { background: #555; } }
 }
-
 .main-content { flex: 1; display: flex; flex-direction: column; padding: 20px; overflow: hidden; }
 
+/* 顶部栏 */
 .top-bar {
   display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;
-  h2 { margin: 0; }
+  background: #252526; padding: 10px 15px; border-radius: 6px; border: 1px solid #333;
+
+  .bar-left { display: flex; align-items: center; gap: 20px; h2 { margin: 0; font-size: 1.5rem; } }
+  .bar-right { display: flex; align-items: center; gap: 10px; }
+
+  .settings-inline {
+    display: flex; align-items: center; background: #333; padding: 4px 10px; border-radius: 4px;
+    label { margin-right: 8px; font-size: 0.9rem; color: #ccc; }
+    input { background: #111; border: 1px solid #555; color: white; padding: 4px; width: 60px; border-radius: 3px; }
+  }
+
   .view-switcher {
     display: flex; background: #333; border-radius: 4px; padding: 2px;
     button {
-      background: transparent; border: none; color: #aaa; padding: 6px 15px; cursor: pointer; border-radius: 4px;
+      background: transparent; border: none; color: #aaa; padding: 6px 15px; cursor: pointer; border-radius: 4px; font-weight: bold;
       &.active { background: #3498db; color: white; }
     }
   }
+
+  button.btn-export-details {
+    background: #e67e22; color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 0.9rem;
+    &:hover { background: #d35400; }
+  }
+
+  button.btn-export-csv {
+    background: #27ae60; color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 0.9rem;
+    &:hover { background: #219150; }
+  }
 }
 
-.settings-bar { margin-bottom: 15px; padding: 10px; background: #2d2d2d; border-radius: 4px; display: inline-block; input { background: #111; border: 1px solid #444; color: white; padding: 4px; width: 60px; margin-left: 10px; } }
+.table-container { flex: 1; overflow: auto; background: #252526; border-radius: 8px; padding: 10px; box-shadow: inset 0 0 20px rgba(0,0,0,0.2); }
 
-.table-container { flex: 1; overflow: auto; background: #252526; border-radius: 8px; padding: 10px; }
+table { width: 100%; border-collapse: separate; border-spacing: 0; min-width: 600px; }
+th, td { text-align: center; padding: 12px 10px; border-bottom: 1px solid #333; }
+th { background: #333; position: sticky; top: 0; z-index: 10; color: #eee; }
 
-table { width: 100%; border-collapse: collapse; min-width: 600px; }
-th, td { text-align: center; padding: 10px; border-bottom: 1px solid #333; }
-th { background: #333; position: sticky; top: 0; }
-.fixed-col { text-align: left; font-weight: bold; color: #ddd; border-right: 1px solid #333; }
-.highlight { color: #2ecc71; font-weight: bold; }
+.striped-table tbody tr:nth-child(odd) { background-color: rgba(52, 152, 219, 0.08); &:hover { background-color: rgba(52, 152, 219, 0.15); } }
+.striped-table tbody tr:nth-child(even) { background-color: rgba(231, 76, 60, 0.08); &:hover { background-color: rgba(231, 76, 60, 0.15); } }
+
+.fixed-col { text-align: left; font-weight: bold; color: #ddd; border-right: 1px solid #333; background: inherit; }
+.highlight { color: #2ecc71; font-weight: bold; font-size: 1.1rem; }
+
+.score-cell {
+  display: flex; flex-direction: column; align-items: center;
+  .main-score { font-size: 1.1rem; font-weight: bold; color: white; }
+  .sub-score { font-size: 0.8rem; color: #aaa; margin-top: 2px; }
+  .plus { color: #aaa; }
+  .minus { color: #e74c3c; }
+}
+
+/* Modal Styles - Updated for Selection */
+.modal-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.7); display: flex; justify-content: center; align-items: center; z-index: 2000; }
+.modal-content.export-modal {
+  background: #2b2b2b; padding: 25px; border-radius: 8px; width: 550px; color: white; display: flex; flex-direction: column;
+  h3 { margin-top: 0; border-bottom: 1px solid #444; padding-bottom: 10px; }
+
+  .modal-body-layout { display: flex; gap: 20px; height: 300px; }
+
+  /* 左侧：选手列表 */
+  .section-players {
+    flex: 1; display: flex; flex-direction: column; border-right: 1px solid #444; padding-right: 15px;
+    .section-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; font-size: 0.9rem; color: #aaa; }
+    .select-all-label { display: flex; align-items: center; gap: 5px; cursor: pointer; color: #3498db; font-weight: bold; }
+    .player-scroll-list {
+      flex: 1; overflow-y: auto; background: #222; border: 1px solid #444; border-radius: 4px; padding: 5px;
+      .player-item-row { display: flex; align-items: center; padding: 5px 8px; cursor: pointer; &:hover { background: #333; } }
+      .p-name { margin-left: 8px; font-size: 0.9rem; }
+    }
+  }
+
+  /* 右侧：选项 */
+  .section-options {
+    width: 200px; padding-left: 5px;
+    h4 { margin: 0 0 15px 0; color: #ccc; font-size: 0.95rem; }
+    .options-grid { display: flex; flex-direction: column; gap: 15px; }
+    .opt-row { display: flex; align-items: center; gap: 10px; cursor: pointer; input { width: 18px; height: 18px; } }
+    .sub-opts { margin-left: 28px; display: flex; flex-direction: column; gap: 5px; select { background: #444; color: white; padding: 6px; border: 1px solid #666; border-radius: 4px; width: 100%; } }
+  }
+
+  .modal-actions { margin-top: 20px; border-top: 1px solid #444; padding-top: 15px; display: flex; justify-content: flex-end; gap: 10px; }
+  .btn-confirm { background: #3498db; color: white; padding: 8px 20px; border: none; border-radius: 4px; cursor: pointer; &:disabled { background: #555; cursor: not-allowed; } }
+  .btn-cancel { background: #555; color: white; padding: 8px 20px; border: none; border-radius: 4px; cursor: pointer; }
+}
 </style>
