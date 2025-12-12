@@ -156,12 +156,21 @@ class HeadlessDeviceNode:
       # 【修复 1】等待服务发现，解决 Windows 缓存问题
       await asyncio.sleep(1.5)
 
+      # 【关键修复】如果在等待期间连接被断开(self.client变为None)，则中止后续操作，防止 AttributeError
+      if not self.client:
+          print(f"Connection aborted for {self.ble_device.name} during setup.")
+          return False
+
       # 【修复 2】检查特征值是否存在
       # 如果不存在，尝试读取标准设备名来"激活"服务列表
       try:
         await self.client.read_gatt_char(STANDARD_DEVICE_NAME_UUID)
       except Exception:
         pass  # 忽略错误，只是为了刷新缓存
+
+      # 再次检查，防止 read_gatt_char 期间断开
+      if not self.client:
+          return False
 
       # 开启通知
       await self.client.start_notify(CHARACTERISTIC_UUID, self._on_notify)
