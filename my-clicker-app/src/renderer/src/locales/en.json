@@ -136,5 +136,10 @@
   "rpt_srt_split": "Plus / Minus",
   "rpt_srt_burst": "Real-time Burst",
   "rpt_btn_dl_zip": "Download ZIP",
-  "rpt_msg_fail": "Export failed!"
+  "rpt_msg_fail": "Export failed!",
+
+  "lbl_history_list": "History Projects",
+  "wiz_suffix_refs": "Refs",
+  "ov_btn_close_settings": "Close",
+  "ov_contestant_waiting": "Waiting..."
 }

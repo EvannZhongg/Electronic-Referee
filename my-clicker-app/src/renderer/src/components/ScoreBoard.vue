@@ -7,7 +7,7 @@
         </button>
       </div>
       <div class="header-section center">
-        <div class="group-label">{{ store.currentContext.groupName || 'Free Mode' }}</div>
+        <div class="group-label">{{ store.currentContext.groupName || $t('wiz_mode_free') }}</div>
         <div class="player-navigator">
           <button class="nav-btn" @click="manualChange(-1)">◀</button>
           <select class="player-select" :value="store.currentContext.contestantName" @change="onSelectPlayer">
@@ -29,12 +29,21 @@
           <label for="autoSwitch" class="toggle-label"><span class="toggle-switch-handle"></span></label>
           <span class="toggle-text">{{ $t('sb_lbl_auto') }}</span>
         </div>
-        <button class="btn-tool btn-overlay" @click="openWindowSelector">🔳 {{ $t('sb_btn_overlay') }}</button>
+        <button class="btn-tool btn-overlay" @click="openWindowSelector"> {{ $t('sb_btn_overlay') }}</button>
+
         <button class="btn-tool btn-reset" @click="handleNextClick">
-            {{ isAllDone ? '🏁 ' + $t('sb_btn_finish') : '⏭ ' + $t('sb_btn_next') }}
-            <span class="shortcut-hint" v-if="store.appSettings.reset_shortcut">[{{ store.appSettings.reset_shortcut }}]</span>
+            {{ isAllDone ? + $t('sb_btn_finish') : '⏭ ' + $t('sb_btn_next') }}
+            <span class="shortcut-hint" v-if="store.appSettings.reset_shortcut && isAutoNext">
+              [{{ store.appSettings.reset_shortcut }}]
+            </span>
         </button>
-        <button class="btn-tool btn-reset-only" @click="handleResetOnly" :title="$t('sb_btn_zero')">⚠ {{ $t('sb_btn_zero') }}</button>
+
+        <button class="btn-tool btn-reset-only" @click="handleResetOnly" :title="$t('sb_btn_zero')">
+            ⚠ {{ $t('sb_btn_zero') }}
+            <span class="shortcut-hint" v-if="store.appSettings.reset_shortcut && !isAutoNext">
+              [{{ store.appSettings.reset_shortcut }}]
+            </span>
+        </button>
       </div>
     </div>
 
@@ -142,6 +151,7 @@ onUnmounted(() => {
   }
 })
 
+// 包含了之前的修复：进入页面时检查当前选手是否已打分
 const initResumeState = async () => {
   if (isAllDone.value) {
     if (store.projectConfig.mode === 'FREE') {
@@ -153,6 +163,11 @@ const initResumeState = async () => {
       showAllDoneDialog.value = true
     }
   } else {
+    // 检查当前选中的选手是否未打分，如果是，则停留在当前，不自动跳下一个
+    const currentName = store.currentContext.contestantName
+    if (currentName && !store.scoredPlayers.has(currentName)) {
+      return
+    }
     const unscored = findNextUnscoredPlayer()
     if (unscored && unscored !== store.currentContext.contestantName) {
        await switchContext(unscored)
@@ -239,11 +254,8 @@ const switchContext = async (name) => { await store.setMatchContext(store.curren
 const handleResetOnly = async () => { if (confirm(t('sb_msg_reset_zero'))) await store.resetAll() }
 
 const manualChange = async (delta) => {
-    if (store.projectConfig.mode === 'FREE' && delta > 0) {
-        await changePlayer(delta)
-    } else {
-        await changePlayer(delta)
-    }
+    // 保持原有逻辑，简单转发
+    await changePlayer(delta)
 }
 
 const onSelectPlayer = async (e) => { await switchContext(e.target.value); await store.resetAll() }
@@ -259,7 +271,12 @@ const handleGlobalKeydown = (e) => {
   const keyPressed = e.key.toUpperCase()
   if (e.ctrlKey === needCtrl && e.shiftKey === needShift && e.altKey === needAlt && keyPressed === keyPart) {
     e.preventDefault()
-    handleNextClick()
+    // 修改: 根据 isAutoNext 决定快捷键行为
+    if (isAutoNext.value) {
+      handleNextClick() // 自动模式：下一位 + 归零
+    } else {
+      handleResetOnly() // 普通模式：仅归零 (带确认)
+    }
   }
 }
 

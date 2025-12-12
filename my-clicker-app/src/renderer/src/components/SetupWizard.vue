@@ -3,7 +3,9 @@
     <div class="steps-header">
       <div :class="['step', { active: currentStep >= 1 }]">{{ $t('wiz_step_proj') }}</div>
       <div class="divider"></div>
-      <div v-if="form.mode === 'TOURNAMENT'" :class="['step', { active: currentStep >= 2 }]">{{ $t('wiz_step_group') }}</div>
+      <div v-if="form.mode === 'TOURNAMENT'" :class="['step', { active: currentStep >= 2 }]">
+        {{ $t('wiz_step_group') }}
+      </div>
       <div v-if="form.mode === 'TOURNAMENT'" class="divider"></div>
       <div :class="['step', { active: currentStep === 3 }]">
         {{ form.mode === 'TOURNAMENT' ? '3. ' + $t('wiz_step_dev') : '2. ' + $t('wiz_step_dev') }}
@@ -100,7 +102,9 @@
         <div v-if="form.mode === 'TOURNAMENT'" class="target-group-select">
           <label>{{ $t('wiz_target_group') }}</label>
           <select v-model="selectedGroupToRun" @change="refreshBindingSlots">
-            <option v-for="g in groups" :key="g.name" :value="g">{{ g.name }} ({{ g.refCount }} Refs)</option>
+            <option v-for="g in groups" :key="g.name" :value="g">
+              {{ g.name }} ({{ g.refCount }} {{ $t('wiz_suffix_refs') }})
+            </option>
           </select>
         </div>
         <div class="scan-controls">
@@ -160,7 +164,7 @@
             <span>{{ b.name }}</span>
             <div class="tags">
               <span class="tag" :class="getRefStatus(b.index, 'pri')">{{ $t('lbl_pri') }}</span>
-              <span v-if="b.mode==='DUAL'" class="tag" :class="getRefStatus(b.index, 'sec')">{{ $t('lbl_sec') }}</span>
+              <span v-if="b.mode === 'DUAL'" class="tag" :class="getRefStatus(b.index, 'sec')">{{ $t('lbl_sec') }}</span>
             </div>
           </div>
         </div>
@@ -183,7 +187,7 @@
 import { ref, reactive, onMounted, computed } from 'vue'
 import { useRefereeStore } from '../stores/refereeStore'
 import { Trash2 } from 'lucide-vue-next'
-// No change to logic script, just imports and logic remains same
+
 const emit = defineEmits(['cancel', 'finished'])
 const store = useRefereeStore()
 const currentStep = ref(1)
@@ -263,7 +267,7 @@ const refreshBindingSlots = () => {
   if (targetGroup.referees && targetGroup.referees.length > 0) {
     bindings.value = JSON.parse(JSON.stringify(targetGroup.referees))
     if (bindings.value.length < count) {
-       for (let i = bindings.value.length; i < count; i++) bindings.value.push({ index: i + 1, name: `Referee ${i + 1}`, mode: 'SINGLE', pri_addr: '', sec_addr: '' })
+      for (let i = bindings.value.length; i < count; i++) bindings.value.push({ index: i + 1, name: `Referee ${i + 1}`, mode: 'SINGLE', pri_addr: '', sec_addr: '' })
     }
     if (bindings.value.length > count) bindings.value = bindings.value.slice(0, count)
   } else {
@@ -340,7 +344,6 @@ const confirmForceEnter = async () => { clearInterval(connectTimer); await store
 </script>
 
 <style scoped lang="scss">
-/* Style omitted - unchanged */
 .setup-wizard { padding: 30px; color: white; max-width: 900px; margin: 0 auto; }
 .steps-header { display: flex; align-items: center; margin-bottom: 30px; .step { font-size: 1.1rem; color: #666; font-weight: bold; &.active { color: #3498db; } } .divider { flex: 1; height: 1px; background: #333; margin: 0 15px; } }
 .step-content { animation: fadeIn 0.3s; h2 { margin-bottom: 20px; color: #eee; } }

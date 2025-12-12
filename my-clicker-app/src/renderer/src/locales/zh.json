@@ -76,7 +76,7 @@
 
   "sb_btn_stop": "结束",
   "sb_lbl_auto": "自动",
-  "sb_btn_overlay": "悬浮窗",
+  "sb_btn_overlay": "悬浮",
   "sb_btn_finish": "完成",
   "sb_btn_next": "下一位",
   "sb_btn_zero": "归零",
@@ -136,5 +136,10 @@
   "rpt_srt_split": "正分 / 负分",
   "rpt_srt_burst": "实时连击",
   "rpt_btn_dl_zip": "下载 ZIP",
-  "rpt_msg_fail": "导出失败！"
+  "rpt_msg_fail": "导出失败！",
+
+  "lbl_history_list": "历史项目列表",
+  "wiz_suffix_refs": "位裁判",
+  "ov_btn_close_settings": "关闭",
+  "ov_contestant_waiting": "等待中..."
 }

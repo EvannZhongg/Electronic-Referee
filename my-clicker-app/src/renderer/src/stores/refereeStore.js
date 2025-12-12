@@ -45,6 +45,13 @@ export const useRefereeStore = defineStore('referee', {
             this.currentContext.groupName = msg.payload.group
             this.currentContext.contestantName = msg.payload.contestant
           }
+          // 【新增】监听分组列表更新
+          else if (msg.type === 'groups_update') {
+            // 直接更新本地的项目配置中的 groups
+            if (this.projectConfig) {
+              this.projectConfig.groups = msg.payload.groups
+            }
+          }
         } catch (e) {
           console.error("WS Message Parse Error", e)
         }

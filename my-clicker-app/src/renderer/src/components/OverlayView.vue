@@ -3,38 +3,44 @@
     <div class="dock-trigger-zone" @mouseenter="onDockEnter" @mouseleave="onDockLeave">
       <div class="overlay-dock" :class="{ visible: isDockVisible || showSettings }">
         <div class="dock-content">
-          <span class="dock-info">{{ store.currentContext.contestantName || 'Waiting...' }}</span>
-          <button class="btn-dock" @click="changePlayer(1)" title="Next Player">Next ▶</button>
-          <button class="btn-dock btn-dock-reset" @click="store.resetAll()" title="Reset Score">R</button>
-          <button class="btn-dock" @click="toggleWaveform" :class="{ active: showWaveform }" title="Toggle Waveform">📈</button>
-          <button class="btn-dock" @click="toggleSettings" :class="{ active: showSettings }" title="Settings">⚙️</button>
-          <button class="btn-dock btn-dock-exit" @click="closeOverlay" title="Close Overlay">✖</button>
+          <span class="dock-info">{{ store.currentContext.contestantName || $t('ov_contestant_waiting') }}</span>
+
+          <button class="btn-dock" @click="changePlayer(1)" :title="$t('ov_btn_next')">Next ▶</button>
+          <button class="btn-dock btn-dock-reset" @click="store.resetAll()" :title="$t('ov_btn_reset')">R</button>
+          <button class="btn-dock" @click="toggleWaveform" :class="{ active: showWaveform }" :title="$t('ov_btn_wave')">📈</button>
+          <button class="btn-dock" @click="toggleSettings" :class="{ active: showSettings }" :title="$t('ov_btn_settings')">⚙️</button>
+          <button class="btn-dock btn-dock-exit" @click="closeOverlay" :title="$t('ov_btn_close')">✖</button>
         </div>
       </div>
     </div>
+
     <div v-if="showSettings" class="settings-panel" @mouseenter="setIgnoreMouse(false)" @mouseleave="handleCardLeave">
-      <h4>Overlay Settings</h4>
+      <h4>{{ $t('ov_title_settings') }}</h4>
+
       <div class="setting-row">
-        <label>Display Mode:</label>
+        <label>{{ $t('ov_lbl_mode') }}</label>
         <select v-model="config.displayMode">
-          <option value="SPLIT">Split (+ / -)</option>
-          <option value="TOTAL">Total Only</option>
-          <option value="COMBINED">Total & Split</option>
-          <option value="REALTIME">Real-time (Burst)</option>
+          <option value="SPLIT">{{ $t('ov_opt_split') }}</option>
+          <option value="TOTAL">{{ $t('ov_opt_total') }}</option>
+          <option value="COMBINED">{{ $t('ov_opt_combined') }}</option>
+          <option value="REALTIME">{{ $t('ov_opt_realtime') }}</option>
         </select>
       </div>
+
       <div class="setting-row">
-        <label>Opacity:</label>
+        <label>{{ $t('ov_lbl_opacity') }}</label>
         <input type="range" v-model.number="config.opacity" min="0" max="1" step="0.05">
         <span>{{ Math.round(config.opacity * 100) }}%</span>
       </div>
+
       <div class="setting-row">
-        <label>Bg Color:</label>
+        <label>{{ $t('ov_lbl_color') }}</label>
         <input type="color" v-model="config.color">
       </div>
+
       <div class="setting-actions">
-        <button class="btn-reset-style" @click="resetStyle">Reset Default</button>
-        <button class="btn-close-settings" @click="showSettings = false">Close</button>
+        <button class="btn-reset-style" @click="resetStyle">{{ $t('ov_btn_reset_def') }}</button>
+        <button class="btn-close-settings" @click="showSettings = false">{{ $t('ov_btn_close_settings') }}</button>
       </div>
     </div>
 
@@ -65,7 +71,6 @@
       </div>
 
       <div class="score-body">
-
         <div v-if="config.displayMode === 'SPLIT'" class="score-grid-row">
           <div class="grid-cell right-align">
             <span class="score-val plus">+{{ ref.plus }}</span>
@@ -110,13 +115,13 @@
             </transition>
           </div>
         </div>
-
       </div>
     </div>
   </div>
 </template>
 
 <script setup>
+// Script 部分无需修改，逻辑保持不变
 import { ref, reactive, onMounted, onUnmounted, watch, nextTick, computed } from 'vue'
 import { useRefereeStore } from '../stores/refereeStore'
 import WaveformWidget from './WaveformWidget.vue'
@@ -352,7 +357,6 @@ const onDrag = (e) => {
 
 const stopDrag = () => { isDragging = false; draggingRefKey = null }
 
-// 【关键修改】 Overlay 端的切换选手逻辑，复刻 Free Mode 自动新建逻辑
 const changePlayer = async (delta) => {
   const groupName = store.currentContext.groupName
   const group = store.projectConfig.groups.find(g => g.name === groupName)
@@ -360,7 +364,6 @@ const changePlayer = async (delta) => {
   const currentIdx = group.players.indexOf(store.currentContext.contestantName)
   const nextIdx = currentIdx + delta
 
-  // 如果是 Free Mode 且超出范围，自动新建
   if (nextIdx >= group.players.length && store.projectConfig.mode === 'FREE') {
       const newPlayerName = `Player ${group.players.length + 1}`
       group.players.push(newPlayerName)
@@ -368,7 +371,6 @@ const changePlayer = async (delta) => {
       await store.setMatchContext(groupName, newPlayerName)
       await store.resetAll()
   } else if (group.players[nextIdx]) {
-      // 正常切换
       await store.setMatchContext(groupName, group.players[nextIdx])
       await store.resetAll()
   }
@@ -376,7 +378,7 @@ const changePlayer = async (delta) => {
 </script>
 
 <style scoped lang="scss">
-/* Styles Omitted, assume unchanged */
+/* 样式保持不变 */
 .overlay-container { width: 100vw; height: 100vh; overflow: hidden; background: transparent; }
 .dock-trigger-zone { position: absolute; top: 0; left: 0; width: 100%; height: 40px; z-index: 10000; display: flex; justify-content: center; }
 .overlay-dock { transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1); transform: translateY(-100%); padding-top: 5px; &.visible { transform: translateY(0); } }
