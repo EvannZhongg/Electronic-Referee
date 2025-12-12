@@ -2,6 +2,7 @@ import os
 import csv
 import json
 from datetime import datetime
+import shutil
 
 # 基础数据存储路径
 BASE_DIR = os.path.join(os.getcwd(), "match_data")
@@ -253,4 +254,21 @@ class StorageManager:
 
         return list(scored_contestants)
 
+    def delete_project(self, dir_name):
+        """删除指定项目文件夹"""
+        if not dir_name:
+            return False
+
+        # 安全检查：防止路径穿越，确保只删除 match_data 下的目录
+        safe_name = os.path.basename(dir_name)
+        project_path = os.path.join(BASE_DIR, safe_name)
+
+        if os.path.exists(project_path) and os.path.isdir(project_path):
+            try:
+                shutil.rmtree(project_path)
+                return True
+            except Exception as e:
+                print(f"[Storage] Delete error: {e}")
+                return False
+        return False
 storage_manager = StorageManager()
