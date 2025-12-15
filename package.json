@@ -45,7 +45,9 @@
       {
         "from": "./backend-engine.exe",
         "to": "backend-engine.exe",
-        "filter": ["**/*"]
+        "filter": [
+          "**/*"
+        ]
       }
     ],
     "win": {
@@ -73,6 +75,7 @@
     "@electron-toolkit/utils": "^4.0.0",
     "axios": "^1.13.2",
     "chart.js": "^4.5.1",
+    "js-yaml": "^4.1.1",
     "lucide-vue-next": "^0.559.0",
     "pinia": "^3.0.4",
     "sass": "^1.95.1",
