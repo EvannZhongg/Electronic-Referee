@@ -373,19 +373,38 @@ class HeadlessReferee:
   def _record_log(self, role, event_type, ble_timestamp):
     """
     统一日志记录
-    注意：这里保存的是 self.score (即计算后的 Total/Plus/Minus)，
-    而不是设备的 raw data。这样 CSV 里的 CurrentTotal 就是真实的比赛分数。
     """
-    group = match_state.get("current_group") or "Unknown_Group"
-    contestant = match_state.get("current_contestant") or "Unknown_Player"
+    # 1. 获取当前比赛上下文
+    group = match_state.get("current_group")
+    contestant = match_state.get("current_contestant")
+
+    # 【修复 1】如果选手名为空或为默认占位符，直接丢弃数据
+    # 这解决了 Unknown_Player_Ref1.csv 的生成问题
+    if not contestant or contestant == "Unknown_Player":
+      return
+
+    # 2. 获取当前模式 (默认为 FREE)
+    config = match_state.get("config") or {}
+    mode = config.get("mode", "FREE")
+
+    # 自由模式 (FREE) 下的 0 分过滤
+    # 如果当前分数为 0 (Total=0, Plus=0, Minus=0)，且处于自由模式，则不记录
+    # 这过滤掉了 "点击下一位" 时触发的归零信号，也过滤了未上场选手的空文件
+    is_zero_score = (self.score['total'] == 0 and self.score['plus'] == 0 and self.score['minus'] == 0)
+
+    if mode == 'FREE' and is_zero_score:
+      return
+
+    # 注意：赛事模式 (TOURNAMENT) 下不拦截 0 分
+    # 这样如果该选手真实存在但没有得分，依然会生成一个包含 0 分记录的 CSV，证明该选手已参赛。
 
     event_details = {
-        "role": role,
-        "type": event_type,
-        "timestamp": ble_timestamp
+      "role": role,
+      "type": event_type,
+      "timestamp": ble_timestamp
     }
 
-    # 调用 Storage Manager 的新接口
+    # 调用 Storage Manager 写入数据
     storage_manager.log_data(group, self.index, contestant, self.score, event_details)
 
   def _broadcast_update(self, msg_type):
