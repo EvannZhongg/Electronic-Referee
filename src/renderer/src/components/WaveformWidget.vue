@@ -35,7 +35,6 @@ const store = useRefereeStore()
 const chartRef = ref(null)
 const isRecording = ref(false)
 const startTime = ref(null)
-// 等待归零锁：防止上一个选手的残留数据干扰，要求必须先收到0才能开始
 const waitForZero = ref(false)
 
 const COLORS = ['#3498db', '#e74c3c', '#2ecc71', '#f1c40f', '#9b59b6', '#e67e22']
@@ -55,7 +54,14 @@ const chartOptions = {
       type: 'linear',
       display: true,
       grid: { color: '#444', drawBorder: false },
-      ticks: { color: '#888', maxRotation: 0, autoSkip: true }
+      ticks: {
+        color: '#888',
+        maxRotation: 0,
+        // 【核心修复】强制每隔 5 或 10 个单位（秒）画一个刻度
+        // 这样可以防止网格线随浮点数坐标滑动时发生抖动或重排
+        stepSize: 5,
+        autoSkip: true
+      }
     },
     y: {
       position: 'right',
@@ -102,9 +108,14 @@ const resetChart = () => {
   isRecording.value = false
   startTime.value = null
 
-  // 【关键修复】检查当前状态是否已经是归零状态
-  // 如果当前已经是全0（通常因为切换选手时触发了resetAll），则不需要等待归零信号
-  // 直接解锁，准备接收第一个非零信号
+  // 【逻辑保留】重置时清除手动设置的 min/max，恢复初始状态
+  if (chartRef.value && chartRef.value.chart) {
+    const chart = chartRef.value.chart
+    delete chart.options.scales.x.min
+    delete chart.options.scales.x.max
+    chart.update('none')
+  }
+
   const allZero = Object.values(store.referees).every(r => r.total === 0)
   waitForZero.value = !allZero
 
@@ -114,23 +125,17 @@ const resetChart = () => {
 watch(
   () => store.referees,
   (newRefs) => {
-    // 检查是否所有分数都是 0
     const allZero = Object.values(newRefs).every(r => r.total === 0)
 
-    // 1. 如果处于“等待归零”状态
     if (waitForZero.value) {
       if (allZero) {
-        // 收到全0信号，解锁，准备开始
         waitForZero.value = false
       }
-      // 只要还在等待归零，无论数据是什么，都忽略，不绘图
       return
     }
 
-    // 2. 如果未开始录制，等待第一个非0信号
     if (!isRecording.value) {
       if (!allZero) {
-        // 第一个非0信号来了，开始录制
         isRecording.value = true
         startTime.value = Date.now()
       } else {
@@ -138,7 +143,6 @@ watch(
       }
     }
 
-    // 3. 正常录制流程
     const now = Date.now()
     const timePoint = parseFloat(((now - startTime.value) / 1000).toFixed(1))
 
@@ -161,20 +165,32 @@ watch(
     })
 
     if (hasUpdate && chartRef.value && chartRef.value.chart) {
-      chartRef.value.chart.update('none')
+      const chart = chartRef.value.chart
+
+      // 【逻辑保留】动态计算滑动窗口，解决波形倒退问题
+      // 窗口大小设为 60秒，你可以根据需要调整
+      const WINDOW_DURATION = 60
+      // 右侧留白 2秒，防止贴边
+      const RIGHT_PADDING = 2
+
+      const newMax = timePoint + RIGHT_PADDING
+      const newMin = Math.max(0, newMax - WINDOW_DURATION)
+
+      chart.options.scales.x.min = newMin
+      chart.options.scales.x.max = newMax
+
+      chart.update('none')
     }
   },
   { deep: true }
 )
 
-// 切换选手 -> 重置图表
 watch(() => store.currentContext.contestantName, (n, o) => {
   if (n !== o) resetChart()
 })
 
 onMounted(() => {
   initDatasets()
-  // 挂载时初始检查
   const allZero = Object.values(store.referees).every(r => r.total === 0)
   waitForZero.value = !allZero
 })
