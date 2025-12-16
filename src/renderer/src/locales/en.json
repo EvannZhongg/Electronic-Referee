@@ -141,11 +141,6 @@
   "lbl_history_list": "History Projects",
   "wiz_suffix_refs": "Refs",
   "ov_btn_close_settings": "Close",
-  "ov_contestant_waiting": "Waiting...",
-  "deleteDialog": {
-    "title": "Delete Project?",
-    "message": "This action cannot be undone. The project \"{name}\" will be permanently deleted.",
-    "confirm": "Delete",
-    "cancel": "Cancel"
+  "ov_contestant_waiting": "Waiting..."
   }
 }
