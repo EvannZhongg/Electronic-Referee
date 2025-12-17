@@ -388,7 +388,7 @@ ft-engine/
             ├── components/  # Vue 组件 (包含页面级视图与功能组件)
             │   ├── HomeView.vue     # 主控台界面 (比赛控制核心)
             │   ├── ReportView.vue   # 数据报表界面 (查看历史与导出)
-            │   ├── OverlayView.vue  # 直播悬浮窗界面 (透明背景)
+            │   ├── OverlayView.vue  # 直播悬浮窗界面
             │   ├── ScoreBoard.vue   # 通用计分板组件
             │   ├── WaveformWidget.vue # 实时波形图组件
             │   └── ...              # 其他组件 (SetupWizard, NavBar...)
