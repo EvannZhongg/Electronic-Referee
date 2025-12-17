@@ -40,7 +40,7 @@
         >
           <Zap :size="16" :class="{ 'icon-active': isAutoNext }" />
           <span>{{ $t('sb_lbl_auto') }}</span>
-          <div class="status-dot" v-if="isAutoNext"></div>
+          <div class="status-dot"></div>
         </button>
 
         <div class="divider-vertical"></div>
@@ -109,6 +109,17 @@
       </div>
     </div>
 
+    <div v-if="showZeroDialog" class="modal-overlay">
+      <div class="modal-content">
+        <h3>{{ $t('sb_btn_zero') }}</h3>
+        <p>{{ $t('sb_msg_reset_zero') }}</p>
+        <div class="modal-actions">
+          <button class="btn-cancel" @click="showZeroDialog = false">{{ $t('btn_cancel') }}</button>
+          <button class="btn-confirm warning" @click="confirmZeroReset">{{ $t('sb_btn_confirm') }}</button>
+        </div>
+      </div>
+    </div>
+
     <div v-if="showAllDoneDialog" class="modal-overlay">
       <div class="modal-content">
         <h3>{{ $t('sb_title_all_scored') }}</h3>
@@ -129,15 +140,16 @@
 import { ref, onMounted, onUnmounted, computed } from 'vue'
 import { useRefereeStore } from '../stores/refereeStore'
 import { useI18n } from 'vue-i18n'
-// 引入新的图标
 import { ArrowLeft, Zap, Monitor, RotateCcw } from 'lucide-vue-next'
 
 const emit = defineEmits(['stop'])
 const store = useRefereeStore()
 const { t } = useI18n()
 
+// 默认开启自动模式
 const isAutoNext = ref(true)
 const showResetDialog = ref(false)
+const showZeroDialog = ref(false)
 const showAllDoneDialog = ref(false)
 const dontAskAgainTemp = ref(false)
 const showWindowSelector = ref(false)
@@ -272,7 +284,13 @@ const changePlayer = async (delta) => {
 }
 
 const switchContext = async (name) => { await store.setMatchContext(store.currentContext.groupName, name) }
-const handleResetOnly = async () => { if (confirm(t('sb_msg_reset_zero'))) await store.resetAll() }
+
+const handleResetOnly = () => { showZeroDialog.value = true }
+
+const confirmZeroReset = async () => {
+  showZeroDialog.value = false
+  await store.resetAll()
+}
 
 const manualChange = async (delta) => {
     await changePlayer(delta)
@@ -320,9 +338,9 @@ const confirmOverlay = async () => {
 <style scoped lang="scss">
 .score-board { height: 100%; display: flex; flex-direction: column; background: transparent; }
 
-/* 头部布局优化 */
+/* 头部样式 */
 .header {
-  height: 72px; /* 稍微增加高度 */
+  height: 72px;
   background: #1e1e1e;
   border-bottom: 1px solid #333;
   display: flex;
@@ -334,13 +352,12 @@ const confirmOverlay = async () => {
   gap: 20px;
 }
 
-/* 区域划分 */
 .header-section { display: flex; align-items: center; height: 100%; }
-.header-section.left { width: 120px; } /* 固定左侧宽度 */
+.header-section.left { width: 120px; }
 .header-section.center { flex: 1; justify-content: center; gap: 15px; min-width: 0; }
-.header-section.right { justify-content: flex-end; gap: 12px; } /* 使用 gap 替代 margin */
+.header-section.right { justify-content: flex-end; gap: 12px; }
 
-/* 通用按钮样式 */
+/* 通用按钮 */
 .btn-tool {
   height: 36px;
   padding: 0 12px;
@@ -356,151 +373,91 @@ const confirmOverlay = async () => {
   cursor: pointer;
   transition: all 0.2s ease;
 
-  &:hover {
-    background: #383838;
-    border-color: #555;
-  }
-  &:active {
-    transform: translateY(1px);
-  }
+  &:hover { background: #383838; border-color: #555; }
+  &:active { transform: translateY(1px); }
 }
 
-/* 左侧停止按钮 */
 .btn-stop {
-  background: transparent;
-  border: 1px solid #444;
-  color: #aaa;
+  background: transparent; border: 1px solid #444; color: #aaa;
   &:hover { color: #fff; border-color: #666; background: #333; }
 }
 
-/* 中间导航条 */
+/* 导航条 */
 .player-navigator {
-  display: flex;
-  align-items: center;
-  background: #111;
-  border-radius: 6px;
-  border: 1px solid #333;
-  padding: 3px;
-  height: 38px;
+  display: flex; align-items: center; background: #111; border-radius: 6px; border: 1px solid #333; padding: 3px; height: 38px;
 }
 .nav-arrow {
-  background: transparent;
-  border: none;
-  color: #666;
-  width: 30px;
-  height: 100%;
-  cursor: pointer;
-  border-radius: 4px;
+  background: transparent; border: none; color: #666; width: 30px; height: 100%; cursor: pointer; border-radius: 4px;
   &:hover { background: #222; color: #fff; }
 }
 .select-wrapper { position: relative; margin: 0 5px; }
 .player-select {
-  background: transparent;
-  color: white;
-  border: none;
-  font-size: 1.1rem;
-  font-weight: bold;
-  text-align: center;
-  outline: none;
-  appearance: none;
-  cursor: pointer;
-  min-width: 120px;
-  padding: 0 10px;
-
+  background: transparent; color: white; border: none; font-size: 1.1rem; font-weight: bold; text-align: center; outline: none; appearance: none; cursor: pointer; min-width: 120px; padding: 0 10px;
   option { background: #333; }
   option.option-scored { color: #2ecc71; }
 }
 
-/* --- 右侧按钮特定样式 --- */
+/* --- 右侧按钮特有样式修正 --- */
 
-/* 1. 自动切换按钮 (Auto) */
+/* 自动切换按钮 */
 .btn-auto {
   background: #252526;
   border: 1px solid #444;
   position: relative;
+  /* 移除原有的宽度伸缩问题 */
 
-  /* 激活态 */
+  /* 圆点样式：始终存在 */
+  .status-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    margin-left: 4px;
+    background: #444; /* 默认：灭灯状态（深灰） */
+    transition: all 0.3s ease; /* 颜色过渡 */
+  }
+
+  /* 激活状态 */
   &.active {
     background: rgba(46, 204, 113, 0.15);
     border-color: #2ecc71;
     color: #2ecc71;
 
+    /* 亮灯：变绿并增加光晕 */
     .status-dot {
       background: #2ecc71;
-      box-shadow: 0 0 8px rgba(46, 204, 113, 0.6);
+      box-shadow: 0 0 6px rgba(46, 204, 113, 0.8);
     }
-  }
-
-  .status-dot {
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    margin-left: 2px;
   }
 }
 
 .divider-vertical { width: 1px; height: 24px; background: #333; margin: 0 4px; }
-
-/* 2. 悬浮窗按钮 */
-.btn-overlay {
-  background: #2980b9;
-  color: white;
-  &:hover { background: #3498db; }
-}
-
-/* 3. 下一位按钮 (Next) */
+.btn-overlay { background: #2980b9; color: white; &:hover { background: #3498db; } }
 .btn-next {
-  background: #27ae60;
-  color: white;
-  min-width: 130px; /* 【核心优化】固定最小宽度，防止文字变化导致抖动 */
-  justify-content: center;
-  position: relative;
+  background: #27ae60; color: white; min-width: 130px; justify-content: center; position: relative;
   &:hover { background: #2ecc71; }
 }
 
-/* 4. 归零按钮 (Zero) */
 .btn-zero {
-  background: rgba(192, 57, 43, 0.2);
-  color: #e74c3c;
-  border: 1px solid rgba(192, 57, 43, 0.4);
-  padding: 0 10px;
-  min-width: 50px; /* 归零按钮较小 */
-  justify-content: center;
-  position: relative;
+  background: rgba(192, 57, 43, 0.2); color: #e74c3c; border: 1px solid rgba(192, 57, 43, 0.4); padding: 0 10px; min-width: 50px; justify-content: center; position: relative;
   &:hover { background: #c0392b; color: white; }
 }
 
-/* 快捷键标签 (Badge) */
 .shortcut-tag {
-  position: absolute;
-  top: -8px;
-  right: -5px;
-  font-size: 0.65rem;
-  background: #111;
-  color: #aaa;
-  border: 1px solid #444;
-  padding: 1px 4px;
-  border-radius: 3px;
-  white-space: nowrap;
-  pointer-events: none;
-  box-shadow: 0 2px 4px rgba(0,0,0,0.3);
-
-  &.warning {
-    border-color: #c0392b;
-    color: #e74c3c;
-  }
+  position: absolute; top: -8px; right: -5px; font-size: 0.65rem; background: #111; color: #aaa; border: 1px solid #444; padding: 1px 4px; border-radius: 3px; white-space: nowrap; pointer-events: none; box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+  &.warning { border-color: #c0392b; color: #e74c3c; }
 }
 
-/* 计分卡区域 (保持原样) */
+/* 计分卡 */
 .panels-container { flex: 1; padding: 20px; display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); grid-auto-rows: max-content; gap: 15px; overflow-y: auto; align-content: start; }
 .score-card { background: #ecf0f1; border-radius: 8px; padding: 15px; display: flex; flex-direction: column; align-items: center; box-shadow: 0 4px 8px rgba(0,0,0,0.2); color: #2c3e50; .card-top { width: 100%; display: flex; justify-content: space-between; margin-bottom: 5px; font-size: 0.9rem; font-weight: bold; } .status-indicators { display: flex; gap: 4px; } .status-dot { width: 8px; height: 8px; border-radius: 50%; background: #bdc3c7; &.connected { background: #2ecc71; } } .score-main { font-size: 4rem; font-weight: 800; line-height: 1; margin: 10px 0; } .score-detail { font-size: 1rem; color: #666; background: #ddd; padding: 2px 10px; border-radius: 10px; } }
 
-/* 弹窗样式 (保持原样) */
+/* 弹窗样式 */
 .modal-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.7); display: flex; justify-content: center; align-items: center; z-index: 2000; }
 .modal-content { background: #2b2b2b; padding: 25px; border-radius: 8px; width: 380px; text-align: center; color: white; h3 { margin-top: 0; } }
 .modal-actions { display: flex; justify-content: center; gap: 10px; margin-top: 20px; }
 .vertical-actions { flex-direction: column; }
 .btn-confirm { background: #3498db; color: white; padding: 8px 20px; border: none; border-radius: 4px; cursor: pointer; }
+.btn-confirm.warning { background: #c0392b; &:hover { background: #e74c3c; } }
 .btn-cancel { background: #555; color: white; padding: 8px 20px; border: none; border-radius: 4px; cursor: pointer; }
 .large { width: 100%; margin-bottom: 10px; padding: 12px; font-size: 1rem; }
 .win-select { width: 100%; padding: 8px; margin: 15px 0; background: #111; color: white; border: 1px solid #444; }
