@@ -23,33 +23,6 @@
   * **国际化**：原生支持中/英多语言切换。
 
 
-
-## 🛠 技术栈
-
-
-
-  * **前端 (Renderer & Main)**:
-
-      * [Electron](https://www.electronjs.org/)
-
-      * [Vue 3](https://vuejs.org/) + [Vite](https://vitejs.dev/)
-
-      * [Pinia](https://pinia.vuejs.org/) (状态管理)
-
-      * [Chart.js](https://www.chartjs.org/) (波形图表)
-
-  * **后端 (Backend Engine)**:
-
-      * [Python 3.9+](https://www.python.org/)
-
-      * [FastAPI](https://fastapi.tiangolo.com/) (HTTP & WebSocket 服务)
-
-      * [Bleak](https://bleak.readthedocs.io/) (跨平台蓝牙通讯)
-
-      * [PyGetWindow](https://pypi.org/project/PyGetWindow/) (窗口句柄管理)
-
-
-
 -----
 
 
