@@ -46,6 +46,17 @@
   "wiz_config_title": "CONFIGURATION",
   "btn_del_group": "Delete Group",
 
+  "btn_import_list": "Import List",
+  "title_import_csv": "Import Excel/CSV",
+  "msg_file_empty": "File is empty or unreadable",
+  "msg_no_valid_data": "No valid data found",
+  "msg_read_fail": "Failed to read file. Please ensure valid format.",
+  "dialog_import_title": "Select Import Column",
+  "dialog_import_subtitle": "Multiple columns detected. Please select the column containing player names:",
+  "lbl_column": "Column",
+  "lbl_rows": "rows",
+  "btn_confirm_import": "Confirm Import",
+
   "wiz_s3_title": "Bind Devices",
   "wiz_target_group": "Target Group:",
   "status_scanning": "Scanning...",

@@ -1,5 +1,13 @@
 <template>
   <div class="setup-wizard">
+    <input
+      type="file"
+      ref="fileInput"
+      style="display: none"
+      accept=".csv, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/vnd.ms-excel"
+      @change="handleFileImport"
+    />
+
     <div class="steps-header">
       <div :class="['step', { active: currentStep >= 1 }]">{{ $t('wiz_step_proj') }}</div>
       <div class="divider"></div>
@@ -77,7 +85,12 @@
             <input type="number" v-model.number="currentEditGroup.refCount" min="1" max="10" />
           </div>
           <div class="form-group">
-            <label>{{ $t('wiz_lbl_player') }}</label>
+            <div class="label-row">
+              <label>{{ $t('wiz_lbl_player') }}</label>
+              <button class="btn-import-mini" @click="triggerFileImport" :title="$t('title_import_csv')">
+                <Upload :size="14" style="margin-right:4px"/> {{ $t('btn_import_list') }}
+              </button>
+            </div>
             <textarea
               v-model="currentEditGroup.rawPlayers"
               rows="6"
@@ -184,14 +197,44 @@
         </div>
       </div>
     </div>
+
+    <div v-if="showImportModal" class="overlay">
+      <div class="import-dialog">
+        <h3>{{ $t('dialog_import_title') }}</h3>
+        <p class="sub-text">{{ $t('dialog_import_subtitle') }}</p>
+
+        <div class="column-list">
+          <div
+            v-for="(col, idx) in importCandidates"
+            :key="idx"
+            class="column-item"
+            :class="{ active: selectedColumnIdx === idx }"
+            @click="selectedColumnIdx = idx"
+          >
+            <div class="col-header">{{ $t('lbl_column') }} {{ idx + 1 }}</div>
+            <div class="col-preview">{{ col.preview }}</div>
+            <div class="col-count">({{ col.data.length }} {{ $t('lbl_rows') }})</div>
+          </div>
+        </div>
+
+        <div class="dialog-actions">
+          <button class="btn-secondary" @click="showImportModal = false">{{ $t('btn_cancel') }}</button>
+          <button class="btn-primary" @click="confirmImport">{{ $t('btn_confirm_import') }}</button>
+        </div>
+      </div>
+    </div>
+
   </div>
 </template>
 
 <script setup>
 import { ref, reactive, onMounted, computed } from 'vue'
 import { useRefereeStore } from '../stores/refereeStore'
-import { Trash2 } from 'lucide-vue-next'
+import { Trash2, Upload } from 'lucide-vue-next'
+import { read, utils } from 'xlsx'
+import { useI18n } from 'vue-i18n' // 引入 useI18n 以便在 script 中使用翻译
 
+const { t } = useI18n() // 获取 t 函数
 const emit = defineEmits(['cancel', 'finished'])
 const store = useRefereeStore()
 const currentStep = ref(1)
@@ -207,6 +250,12 @@ const showForceEntry = ref(false)
 let connectTimer = null
 const isResuming = computed(() => !!store.projectConfig.created_at)
 
+// --- 导入功能相关状态 ---
+const fileInput = ref(null)
+const showImportModal = ref(false)
+const importCandidates = ref([]) // 解析出的列数据 [{header: '列A', preview: '张三...', data: [...]}]
+const selectedColumnIdx = ref(0) // 用户当前选中的列索引
+
 onMounted(() => {
   if (isResuming.value) {
     form.projectName = store.projectConfig.project_name
@@ -220,6 +269,96 @@ onMounted(() => {
     currentStep.value = 1
   }
 })
+
+// --- 导入功能逻辑 ---
+const triggerFileImport = () => {
+  fileInput.value.click()
+}
+
+const handleFileImport = async (e) => {
+  const file = e.target.files[0]
+  if (!file) return
+
+  try {
+    const data = await file.arrayBuffer()
+    const workbook = read(data)
+    const firstSheetName = workbook.SheetNames[0]
+    const worksheet = workbook.Sheets[firstSheetName]
+
+    // 获取二维数组数据 (header: 1 表示不使用第一行作为key，而是返回数组)
+    const jsonData = utils.sheet_to_json(worksheet, { header: 1 })
+
+    if (!jsonData || jsonData.length === 0) {
+      // 国际化修改点 6: JS Alert 使用 t()
+      alert(t('msg_file_empty'))
+      return
+    }
+
+    // 分析列结构，找出最大列数
+    let maxCols = 0
+    jsonData.forEach(row => {
+      if (row.length > maxCols) maxCols = row.length
+    })
+
+    const candidates = []
+    for (let c = 0; c < maxCols; c++) {
+      const colData = []
+      // 提取该列所有非空数据
+      for (let r = 0; r < jsonData.length; r++) {
+        const cell = jsonData[r][c]
+        if (cell !== undefined && cell !== null && String(cell).trim() !== '') {
+          colData.push(String(cell).trim())
+        }
+      }
+
+      if (colData.length > 0) {
+        // 取前三个作为预览
+        const preview = colData.slice(0, 3).join(', ') + (colData.length > 3 ? '...' : '')
+        candidates.push({
+          index: c,
+          header: `列 ${c + 1}`, // 这个 "列" 可以保留硬编码，或者使用 t('lbl_column') 拼接，这里暂不处理
+          preview: preview,
+          data: colData
+        })
+      }
+    }
+
+    if (candidates.length === 0) {
+      alert(t('msg_no_valid_data'))
+      return
+    }
+
+    importCandidates.value = candidates
+    selectedColumnIdx.value = 0 // 默认选中第一列
+    showImportModal.value = true
+
+  } catch (err) {
+    console.error(err)
+    alert(t('msg_read_fail'))
+  } finally {
+    // 清空 input 方便下次重复选择同个文件
+    e.target.value = ''
+  }
+}
+
+const confirmImport = () => {
+  if (!currentEditGroup.value) return
+
+  const selectedCandidate = importCandidates.value[selectedColumnIdx.value]
+  if (selectedCandidate) {
+    const newPlayers = selectedCandidate.data.join('\n')
+
+    // 追加还是覆盖？这里选择追加，如果原有框为空则直接填入，如果不为空换行追加
+    if (currentEditGroup.value.rawPlayers && currentEditGroup.value.rawPlayers.trim()) {
+      currentEditGroup.value.rawPlayers += '\n' + newPlayers
+    } else {
+      currentEditGroup.value.rawPlayers = newPlayers
+    }
+  }
+  showImportModal.value = false
+}
+
+// --- 原有逻辑 ---
 
 const handleStep1Next = async () => {
   if (!isResuming.value) await store.createProject(form.projectName, form.mode)
@@ -353,9 +492,43 @@ const confirmForceEnter = async () => { clearInterval(connectTimer); await store
 .step-content { animation: fadeIn 0.3s; h2 { margin-bottom: 20px; color: #eee; } }
 .form-group { margin-bottom: 20px; label { display: block; margin-bottom: 8px; color: #ccc; } input, textarea, select { width: 100%; padding: 10px; background: #252526; border: 1px solid #3d3d3d; color: white; border-radius: 4px; outline: none; &:focus { border-color: #3498db; } } .hint { color: #888; font-size: 0.8rem; margin-top: 4px; display: block; } }
 .radio-group { display: flex; gap: 20px; label { cursor: pointer; padding: 10px 20px; background: #252526; border: 1px solid #3d3d3d; border-radius: 4px; transition: all 0.2s; &.checked { background: #3498db; border-color: #3498db; } input { display: none; } } }
+
+/* Group Manager Layout */
 .group-manager { .manager-layout { display: flex; gap: 20px; height: 400px; } .sidebar { width: 200px; background: #252526; border: 1px solid #3d3d3d; display: flex; flex-direction: column; .list-header { padding: 10px; background: #333; font-weight: bold; text-align: center; } .group-list { flex: 1; overflow-y: auto; } .group-item { padding: 10px; cursor: pointer; border-bottom: 1px solid #333; &:hover { background: #2f2f2f; } &.active { background: #3498db; color: white; } } .btn-add-group { padding: 10px; background: #2ecc71; border: none; color: white; cursor: pointer; font-weight: bold; &:hover { background: #27ae60; } } } .main-edit { flex: 1; background: #252526; padding: 20px; border: 1px solid #3d3d3d; display: flex; flex-direction: column; overflow-y: auto; overflow-x: hidden; } }
 .edit-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; padding-bottom: 10px; border-bottom: 1px solid #3d3d3d; }
+
+/* Import Button Styling */
+.label-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+  label { margin-bottom: 0; }
+}
+
+.btn-import-mini {
+  background: #252526;
+  border: 1px solid #3498db;
+  color: #3498db;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 0.8rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  transition: all 0.2s;
+
+  &:hover {
+    background: #3498db;
+    color: white;
+  }
+}
+
+/* Scan Bar */
 .scan-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; .target-group-select { display: flex; align-items: center; gap: 10px; select { width: 200px; padding: 5px; } } }
+.scan-controls { display: flex; align-items: center; gap: 10px; .status { margin-right: 10px; color: #aaa; font-size: 0.9rem; &.scanning { color: #f39c12; animation: blink 1s infinite; } } }
+
+/* Device List */
 .device-list-container { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 15px; margin-bottom: 20px; max-height: 400px; overflow-y: auto; }
 .ref-card {
   background: #252526;
@@ -370,7 +543,6 @@ const confirmForceEnter = async () => { clearInterval(connectTimer); await store
     justify-content: space-between;
     align-items: center;
 
-    /* 这里替换了原有的样式，应用了你提供的样式 */
     .ref-name-input {
       background: #333;
       border: 1px solid #555;
@@ -378,7 +550,7 @@ const confirmForceEnter = async () => { clearInterval(connectTimer); await store
       padding: 4px 8px;
       border-radius: 4px;
       margin-left: 8px;
-      width: 140px; /* 建议加上宽度限制，避免输入框过小 */
+      width: 140px;
       font-size: 0.9rem;
 
       &:focus {
@@ -398,10 +570,70 @@ const confirmForceEnter = async () => { clearInterval(connectTimer); await store
     select { width: 180px; padding: 4px; font-size: 0.9rem; }
   }
 }
+
+/* Actions and Overlays */
 .actions { display: flex; justify-content: flex-end; gap: 15px; margin-top: 20px; padding-top: 15px; border-top: 1px solid #333; button { padding: 8px 20px; border-radius: 4px; border: none; cursor: pointer; font-weight: bold; &.btn-primary { background: #3498db; color: white; &:hover { background: #2980b9; } } &.btn-secondary { background: #555; color: white; &:hover { background: #666; } } &.btn-success { background: #2ecc71; color: white; &:hover { background: #27ae60; } } &.btn-scan { background: #f39c12; color: white; &:hover { background: #d35400; } } &:disabled { opacity: 0.5; cursor: not-allowed; } } }
 .overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0, 0, 0, 0.8); display: flex; justify-content: center; align-items: center; z-index: 1000; }
 .connect-dialog { background: #252526; padding: 20px; width: 350px; border-radius: 8px; text-align: center; }
 .status-row { display: flex; justify-content: space-between; margin-bottom: 8px; border-bottom: 1px solid #333; padding-bottom: 4px; .tag { font-size: 0.8rem; padding: 2px 6px; border-radius: 3px; margin-left: 5px; &.connected { background: #27ae60; } &.connecting { background: #f39c12; } &.error { background: #c0392b; } &.waiting { background: #555; } } }
 .dialog-actions { margin-top: 15px; button { margin: 0 5px; } }
+
+/* Import Dialog Styles */
+.import-dialog {
+  background: #252526;
+  padding: 20px;
+  width: 500px;
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  max-height: 80vh;
+
+  h3 { margin-top: 0; margin-bottom: 10px; color: white; }
+  .sub-text { color: #aaa; font-size: 0.9rem; margin-bottom: 15px; }
+
+  .column-list {
+    flex: 1;
+    overflow-y: auto;
+    border: 1px solid #3d3d3d;
+    border-radius: 4px;
+    margin-bottom: 20px;
+  }
+
+  .column-item {
+    display: flex;
+    align-items: center;
+    padding: 10px;
+    border-bottom: 1px solid #333;
+    cursor: pointer;
+    transition: background 0.2s;
+
+    &:last-child { border-bottom: none; }
+    &:hover { background: #2f2f2f; }
+    &.active {
+      background: rgba(52, 152, 219, 0.2);
+      border-left: 3px solid #3498db;
+    }
+
+    .col-header {
+      width: 80px;
+      font-weight: bold;
+      color: #ddd;
+    }
+    .col-preview {
+      flex: 1;
+      color: #999;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      margin: 0 10px;
+    }
+    .col-count {
+      font-size: 0.8rem;
+      color: #666;
+    }
+  }
+}
+
 @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes blink { 50% { opacity: 0.5; } }
 </style>

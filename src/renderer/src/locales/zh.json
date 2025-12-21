@@ -46,6 +46,17 @@
   "wiz_config_title": "配置详情",
   "btn_del_group": "删除该组",
 
+  "btn_import_list": "导入名单",
+  "title_import_csv": "导入 Excel/CSV",
+  "msg_file_empty": "文件为空或无法读取",
+  "msg_no_valid_data": "未找到有效数据",
+  "msg_read_fail": "读取文件失败，请确保格式正确",
+  "dialog_import_title": "选择要导入的列",
+  "dialog_import_subtitle": "检测到多列数据，请选择包含选手姓名的一列：",
+  "lbl_column": "列",
+  "lbl_rows": "行",
+  "btn_confirm_import": "确认导入",
+
   "wiz_s3_title": "设备绑定",
   "wiz_target_group": "选择要启动的组别:",
   "status_scanning": "扫描中...",
