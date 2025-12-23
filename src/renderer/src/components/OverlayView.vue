@@ -380,7 +380,21 @@ const changePlayer = async (delta) => {
 <style scoped lang="scss">
 /* 样式保持不变 */
 .overlay-container { width: 100vw; height: 100vh; overflow: hidden; background: transparent; }
-.dock-trigger-zone { position: absolute; top: 0; left: 0; width: 100%; height: 40px; z-index: 10000; display: flex; justify-content: center; }
+.dock-trigger-zone {
+  position: absolute;
+  top: 0;
+  /* left: 0; width: 100%;  <-- 删除这两行旧代码 */
+
+  /* 新增/修改如下：让触发区居中且限制宽度 */
+  left: 50%;
+  transform: translateX(-50%);
+  width: 600px; /* 你可以根据功能栏内容的实际宽度适当调整这个值 */
+
+  height: 40px;
+  z-index: 10000;
+  display: flex;
+  justify-content: center;
+}
 .overlay-dock { transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1); transform: translateY(-100%); padding-top: 5px; &.visible { transform: translateY(0); } }
 .dock-content { background: rgba(0, 0, 0, 0.85); padding: 6px 15px; border-radius: 0 0 10px 10px; display: flex; align-items: center; gap: 10px; color: white; box-shadow: 0 4px 12px rgba(0,0,0,0.3); }
 .dock-info { font-weight: bold; font-size: 0.9rem; margin-right: 5px; color: #ddd; }
