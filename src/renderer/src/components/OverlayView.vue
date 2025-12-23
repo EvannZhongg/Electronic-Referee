@@ -1,5 +1,5 @@
 <template>
-  <div class="overlay-container">
+  <div class="overlay-container" @click.self="handleBackgroundClick">
     <div class="dock-trigger-zone" @mouseenter="onDockEnter" @mouseleave="onDockLeave">
       <div class="overlay-dock" :class="{ visible: isDockVisible || showSettings }">
         <div class="dock-content">
@@ -235,6 +235,13 @@ const onDockLeave = () => {
   if (!isDragging && !showSettings.value) setIgnoreMouse(true)
 }
 const toggleSettings = () => { showSettings.value = !showSettings.value }
+
+const handleBackgroundClick = () => {
+  if (showSettings.value) {
+    showSettings.value = false
+    setIgnoreMouse(true)
+  }
+}
 
 if (window.electron) {
   window.electron.ipcRenderer.on('init-overlay-data', (event, data) => {

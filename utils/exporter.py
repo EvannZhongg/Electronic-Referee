@@ -103,122 +103,130 @@ class ExportManager:
         return "\n".join(lines)
 
     def _generate_srt_content(self, events, mode):
-        if not events: return ""
+      if not events: return ""
 
-        srt_entries = []
-        start_time_base = events[0]['dt']
+      srt_entries = []
+      start_time_base = events[0]['dt']
 
-        if mode == 'REALTIME':
-            # 连击判定逻辑 (与 OverlayView 一致)
-            BURST_THRESHOLD = 0.4  # 400ms
-            DISPLAY_DURATION = 1.0  # 1s
+      if mode == 'REALTIME':
+        # 1. 阈值修正：与 OverlapView 保持一致 (300ms)
+        BURST_THRESHOLD = 0.3
+        DISPLAY_DURATION = 1.0
 
-            # 我们需要重建事件流
-            # data_stream: 记录每次变化的 delta
-            # events 已经是累积值，需要算出 delta
-            prev = {'plus': 0, 'minus': 0}
+        # 2. 智能基准修正：解决“导入显示+8”的问题
+        # 默认认为是从 0 开始（prev=0），这样第一下点击（+1）会被正确记录。
+        prev = {'plus': 0, 'minus': 0}
 
-            current_burst = None  # { start_dt, last_dt, val_plus, val_minus }
+        # 但如果第一条数据的绝对值大于 1（例如 +8），说明这是中途接入或重连的数据。
+        # 此时应将第一条数据设为“基准”，避免产生一个巨大的 "+8" 字幕。
+        if events:
+          first = events[0]
+          # 设定一个容错阈值（这里设为1），只有超过此值才视为“状态恢复”
+          if abs(first['plus']) > 1 or abs(first['minus']) > 1:
+            prev = {'plus': first['plus'], 'minus': first['minus']}
 
-            for e in events:
-                delta_p = e['plus'] - prev['plus']
-                delta_m = e['minus'] - prev['minus']
-                prev = {'plus': e['plus'], 'minus': e['minus']}
+        current_burst = None  # { start_dt, last_dt, val_plus, val_minus }
 
-                if delta_p == 0 and delta_m == 0: continue
+        for e in events:
+          delta_p = e['plus'] - prev['plus']
+          delta_m = e['minus'] - prev['minus']
 
-                now = e['dt']
+          # 更新 prev 必须在计算 delta 之后，但在处理逻辑之前(如果是循环内更新)
+          # 但这里我们需要保留 prev 给下一次循环，所以 prev 的更新应放在循环末尾。
+          # 注意：为了让逻辑清晰，我们先暂存当前值为 next_prev
+          next_prev = {'plus': e['plus'], 'minus': e['minus']}
 
-                # 判定是否属于当前连击
-                is_connected = False
-                if current_burst:
-                    diff = (now - current_burst['last_dt']).total_seconds()
-                    if diff < BURST_THRESHOLD:
-                        is_connected = True
+          # 如果没有变化（重复数据），直接跳过更新 prev（其实更新也没关系，因为值一样）
+          # 但为了逻辑严谨，我们先判断 delta
+          if delta_p == 0 and delta_m == 0:
+            prev = next_prev
+            continue
 
-                if is_connected:
-                    # 累加
-                    current_burst['val_plus'] += delta_p
-                    current_burst['val_minus'] += delta_m
-                    current_burst['last_dt'] = now
-                else:
-                    # 结算上一个
-                    if current_burst:
-                        srt_entries.append(self._make_srt_entry(current_burst, start_time_base, DISPLAY_DURATION))
+          now = e['dt']
 
-                    # 开启新连击
-                    current_burst = {
-                        'start_dt': now,
-                        'last_dt': now,
-                        'val_plus': delta_p,
-                        'val_minus': delta_m
-                    }
+          # 判定是否属于当前连击
+          is_connected = False
+          if current_burst:
+            diff = (now - current_burst['last_dt']).total_seconds()
+            if diff < BURST_THRESHOLD:
+              is_connected = True
 
-            # 结算最后一个
+          if is_connected:
+            # 累加
+            current_burst['val_plus'] += delta_p
+            current_burst['val_minus'] += delta_m
+            current_burst['last_dt'] = now
+          else:
+            # 结算上一个
             if current_burst:
-                srt_entries.append(self._make_srt_entry(current_burst, start_time_base, DISPLAY_DURATION))
+              srt_entries.append(self._make_srt_entry(current_burst, start_time_base, DISPLAY_DURATION))
 
-        else:
-            # TOTAL 或 SPLIT 模式 (简单的一秒展示)
-            # 逻辑：每当数值变化，生成一条字幕，持续1秒
-            # 如果1秒内又有变化，是否截断？标准SRT允许重叠，但为了清晰，我们让上一条在下一条开始时结束
+            # 开启新连击
+            current_burst = {
+              'start_dt': now,
+              'last_dt': now,
+              'val_plus': delta_p,
+              'val_minus': delta_m
+            }
 
-            prev_val = None
-            last_entry = None
+          # 循环结束前更新 prev
+          prev = next_prev
 
-            for e in events:
-                val_str = ""
-                if mode == 'TOTAL':
-                    val_str = str(e['total'])
-                    curr_compare = e['total']
-                else:  # SPLIT
-                    val_str = f"+{e['plus']} / -{e['minus']}"
-                    curr_compare = (e['plus'], e['minus'])
+        # 结算最后一个
+        if current_burst:
+          srt_entries.append(self._make_srt_entry(current_burst, start_time_base, DISPLAY_DURATION))
 
-                if curr_compare != prev_val:
-                    # 数值变了
-                    now = e['dt']
+      else:
+        # TOTAL 或 SPLIT 模式 (保持原样)
+        prev_val = None
+        last_entry = None
 
-                    # 修正上一条的结束时间 (如果有的话，且时间差小于默认时长)
-                    if last_entry:
-                        time_since_prev = (now - last_entry['start_abs']).total_seconds()
-                        if time_since_prev < 1.0:
-                            last_entry['end_abs'] = now  # 截断
+        for e in events:
+          val_str = ""
+          if mode == 'TOTAL':
+            val_str = str(e['total'])
+            curr_compare = e['total']
+          else:  # SPLIT
+            val_str = f"+{e['plus']} / -{e['minus']}"
+            curr_compare = (e['plus'], e['minus'])
 
-                    entry = {
-                        'start_abs': now,
-                        'end_abs': now + timedelta(seconds=1),
-                        'text': val_str
-                    }
-                    srt_entries.append(entry)
-                    last_entry = entry
-                    prev_val = curr_compare
+          if curr_compare != prev_val:
+            now = e['dt']
+            if last_entry:
+              time_since_prev = (now - last_entry['start_abs']).total_seconds()
+              if time_since_prev < 1.0:
+                last_entry['end_abs'] = now
 
-        # 生成最终字符串
-        output = []
-        for idx, entry in enumerate(srt_entries):
-            # 计算相对时间
-            start_rel = entry['start_abs'] - start_time_base
-            end_rel = entry['end_abs'] - start_time_base
+            entry = {
+              'start_abs': now,
+              'end_abs': now + timedelta(seconds=1),
+              'text': val_str
+            }
+            srt_entries.append(entry)
+            last_entry = entry
+            prev_val = curr_compare
 
-            # 格式化
-            t1 = format_srt_time(start_rel)
-            t2 = format_srt_time(end_rel)
+      # 生成最终字符串
+      output = []
+      for idx, entry in enumerate(srt_entries):
+        start_rel = entry['start_abs'] - start_time_base
+        end_rel = entry['end_abs'] - start_time_base
+        t1 = format_srt_time(start_rel)
+        t2 = format_srt_time(end_rel)
 
-            text = entry.get('text')
-            # 如果是 REALTIME 模式，text 需要在这里根据 burst 值生成
-            if mode == 'REALTIME' and not text:
-                p = entry['val_plus']
-                m = entry['val_minus']
-                parts = []
-                if p > 0: parts.append(f"+{p}")
-                if m > 0: parts.append(f"-{m}")
-                text = " ".join(parts)
+        text = entry.get('text')
+        if mode == 'REALTIME' and not text:
+          p = entry['val_plus']
+          m = entry['val_minus']
+          parts = []
+          if p > 0: parts.append(f"+{p}")
+          if m > 0: parts.append(f"-{m}")
+          text = " ".join(parts)
 
-            if text:
-                output.append(f"{idx + 1}\n{t1} --> {t2}\n{text}\n")
+        if text:
+          output.append(f"{idx + 1}\n{t1} --> {t2}\n{text}\n")
 
-        return "\n".join(output)
+      return "\n".join(output)
 
     def _make_srt_entry(self, burst, base, duration):
         return {
