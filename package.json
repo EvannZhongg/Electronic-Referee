@@ -1,8 +1,8 @@
 {
   "name": "ft-engine",
   "productName": "FT Engine",
-  "version": "1.1.0",
-  "description": "Professional Electronic Referee System by Freakthrow",
+  "version": "1.1.1",
+  "description": "Professional Electronic Referee System by freakthrow",
   "main": "./out/main/index.js",
   "author": {
     "name": "Evan Zhong",
