@@ -361,24 +361,56 @@ const confirmImport = () => {
 // --- 原有逻辑 ---
 
 const handleStep1Next = async () => {
-  if (!isResuming.value) await store.createProject(form.projectName, form.mode)
-  else { store.projectConfig.mode = form.mode; store.projectConfig.project_name = form.projectName }
-  if (groups.value.length === 0) {
-    if (form.mode === 'TOURNAMENT') addNewGroup()
-    else {
-      const freeGroup = { name: 'Free Mode', refCount: form.refereeCount, rawPlayers: 'Player 1', players: ['Player 1'], referees: [] }
-      groups.value = [freeGroup]
+  try {
+    // 1. 尝试创建或更新项目配置
+    // 如果后端因为权限问题无法写入 config.json，这里会抛出异常
+    if (!isResuming.value) {
+      await store.createProject(form.projectName, form.mode)
+    } else {
+      store.projectConfig.mode = form.mode
+      store.projectConfig.project_name = form.projectName
     }
-  } else {
-    if (isResuming.value && form.mode === 'FREE') groups.value[0].refCount = form.refereeCount
-  }
-  if (form.mode === 'TOURNAMENT') currentStep.value = 2
-  else {
-    await store.updateGroups(groups.value)
-    selectedGroupToRun.value = groups.value[0]
-    refreshBindingSlots()
-    currentStep.value = 3
-    if (scannedDevices.value.length === 0) startScan(false)
+
+    // 2. 初始化分组逻辑 (如果在内存中操作，一般不会报错)
+    if (groups.value.length === 0) {
+      if (form.mode === 'TOURNAMENT') {
+        addNewGroup()
+      } else {
+        const freeGroup = {
+          name: 'Free Mode',
+          refCount: form.refereeCount,
+          rawPlayers: 'Player 1',
+          players: ['Player 1'],
+          referees: []
+        }
+        groups.value = [freeGroup]
+      }
+    } else {
+      if (isResuming.value && form.mode === 'FREE') {
+        groups.value[0].refCount = form.refereeCount
+      }
+    }
+
+    // 3. 页面跳转与后续操作
+    if (form.mode === 'TOURNAMENT') {
+      currentStep.value = 2
+    } else {
+      // 自由模式直接进入设备绑定，需先保存分组信息
+      // 这里也涉及后端写入，同样可能抛错
+      await store.updateGroups(groups.value)
+
+      selectedGroupToRun.value = groups.value[0]
+      refreshBindingSlots()
+      currentStep.value = 3
+
+      if (scannedDevices.value.length === 0) {
+        startScan(false)
+      }
+    }
+  } catch (error) {
+    console.error("Step 1 Error:", error)
+    // 弹出错误提示，避免用户以为程序卡死
+    alert(t('msg_create_fail') || "无法创建项目，请检查是否有磁盘写入权限或后台服务是否正常。\nFailed to create project. Check write permissions or backend status.")
   }
 }
 
