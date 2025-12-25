@@ -217,7 +217,11 @@ const confirmSmartNext = async () => {
   if (dontAskAgainTemp.value) store.updateSetting('suppress_reset_confirm', true)
   showResetDialog.value = false
   const currentName = store.currentContext.contestantName
-  store.markAsScored(currentName)
+
+  // 【修改】使用 broadcastPlayerScored 代替 markAsScored
+  // 这样主窗口操作 Next 时，悬浮窗或其他端也能知道该选手已完成
+  store.broadcastPlayerScored(currentName)
+
   const nextPlayer = findNextUnscoredPlayer()
   if (nextPlayer) {
     await switchContext(nextPlayer)

@@ -4,7 +4,7 @@ import struct
 from dataclasses import dataclass
 from contextlib import asynccontextmanager
 from fastapi.responses import StreamingResponse
-
+import json
 import sys
 import os
 import yaml
@@ -504,7 +504,16 @@ async def ws_endpoint(websocket: WebSocket):
   await websocket.accept()
   active_ws.append(websocket)
   try:
-    while True: await websocket.receive_text()
+    while True:
+      # 【修改】监听并处理前端发送的消息
+      data = await websocket.receive_text()
+      try:
+        msg = json.loads(data)
+        # 如果收到“标记已打分”的消息，广播给所有连接的客户端（包括主窗口和悬浮窗）
+        if msg.get("type") == "mark_scored":
+            await broadcast_json(msg)
+      except:
+        pass
   except:
     if websocket in active_ws: active_ws.remove(websocket)
 

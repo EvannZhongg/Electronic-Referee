@@ -374,6 +374,18 @@ const changePlayer = async (delta) => {
   const group = store.projectConfig.groups.find(g => g.name === groupName)
   if (!group) return
   const currentIdx = group.players.indexOf(store.currentContext.contestantName)
+
+  // 【核心修复】点击 Next 时，标记当前选手已完成，并尝试广播给主窗口
+  // 注意：需要确保 Store 中实现了 broadcastPlayerScored 方法以支持多窗口同步
+  if (delta > 0 && store.currentContext.contestantName) {
+    if (store.broadcastPlayerScored) {
+      store.broadcastPlayerScored(store.currentContext.contestantName)
+    } else {
+      // 兼容性兜底：如果 Store 未更新，仅本地标记
+      store.markAsScored(store.currentContext.contestantName)
+    }
+  }
+
   const nextIdx = currentIdx + delta
 
   if (nextIdx >= group.players.length && store.projectConfig.mode === 'FREE') {

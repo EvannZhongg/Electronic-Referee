@@ -4,26 +4,14 @@ import axios from 'axios'
 export const useRefereeStore = defineStore('referee', {
   state: () => ({
     // --- 动态配置 ---
-    apiBase: 'http://127.0.0.1:8000', // 默认值，会被 initConfig 覆盖
-    wsUrl: 'ws://127.0.0.1:8000/ws',  // 默认值
-
-    // 裁判与设备状态
+    apiBase: 'http://127.0.0.1:8000',
+    wsUrl: 'ws://127.0.0.1:8000/ws',
     referees: {},
     isConnected: false,
     ws: null,
-
-    // 项目配置
     projectConfig: {name: '', mode: 'FREE', groups: []},
-    // 当前比赛上下文
     currentContext: {groupName: '', contestantName: ''},
-
-    // 全局用户配置
-    appSettings: {
-      language: 'zh',
-      suppress_reset_confirm: false
-    },
-
-    // 本地维护已打分选手集合 (用于智能跳转下一位)
+    appSettings: {language: 'zh', suppress_reset_confirm: false},
     scoredPlayers: new Set()
   }),
 
@@ -49,12 +37,9 @@ export const useRefereeStore = defineStore('referee', {
 
     // --- 1. WebSocket 连接 ---
     async connectWebSocket() {
-      // 1. 确保配置已加载 (获取正确端口)
       await this.initConfig()
-
       if (this.ws) return
 
-      // 2. 使用动态的 wsUrl 连接
       this.ws = new WebSocket(this.wsUrl)
 
       this.ws.onopen = () => {
@@ -65,19 +50,19 @@ export const useRefereeStore = defineStore('referee', {
       this.ws.onmessage = (event) => {
         try {
           const msg = JSON.parse(event.data)
-          // 监听分数更新、状态更新、以及上下文更新(同步多端)
           if (msg.type === 'score_update' || msg.type === 'status_update') {
             this.updateScore(msg.payload)
           } else if (msg.type === 'context_update') {
             this.currentContext.groupName = msg.payload.group
             this.currentContext.contestantName = msg.payload.contestant
-          }
-          // 【新增】监听分组列表更新
-          else if (msg.type === 'groups_update') {
-            // 直接更新本地的项目配置中的 groups
+          } else if (msg.type === 'groups_update') {
             if (this.projectConfig) {
               this.projectConfig.groups = msg.payload.groups
             }
+          }
+          // 【新增】监听选手已打分广播，同步多端状态
+          else if (msg.type === 'mark_scored') {
+            this.markAsScored(msg.payload.name)
           }
         } catch (e) {
           console.error("WS Message Parse Error", e)
@@ -87,7 +72,6 @@ export const useRefereeStore = defineStore('referee', {
       this.ws.onclose = () => {
         this.isConnected = false
         this.ws = null
-        // 断线重连
         setTimeout(() => this.connectWebSocket(), 3000)
       }
     },
@@ -205,8 +189,8 @@ export const useRefereeStore = defineStore('referee', {
 
         // 【新增】检查后端是否返回了错误信息
         if (res.data.error) {
-            console.warn("Scan Error:", res.data.error)
-            throw new Error(res.data.error) // 抛出错误供组件捕获
+          console.warn("Scan Error:", res.data.error)
+          throw new Error(res.data.error) // 抛出错误供组件捕获
         }
 
         return res.data.devices || []
@@ -338,7 +322,19 @@ export const useRefereeStore = defineStore('referee', {
       }
     },
 
-    // 标记选手已完成 (乐观更新)
+    broadcastPlayerScored(name) {
+      // 1. 本地乐观更新
+      this.markAsScored(name)
+      // 2. 发送给后端广播给其他窗口
+      if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+        this.ws.send(JSON.stringify({
+          type: 'mark_scored',
+          payload: {name: name}
+        }))
+      }
+    },
+
+    // 标记选手已完成 (本地更新)
     markAsScored(contestantName) {
       if (contestantName) {
         this.scoredPlayers.add(contestantName)
